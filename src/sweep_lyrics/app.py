@@ -1692,6 +1692,59 @@ def show_shazam_history(live):
     live.start()
 
 
+def show_help(live, songrec_available=False):
+    """Pauses Live and shows every key binding in a centered panel, same
+    visual language as the history panel. Any key (or a long timeout)
+    returns to the lyrics view."""
+    live.stop()
+    console = Console()
+    console.clear()
+
+    keys = [
+        ("space", "play / pause"),
+        ("+ / -", "zoom (kitty allow_remote_control)"),
+        ("k", "karaoke wipe on / off"),
+        ("d", "karaoke debug overlay"),
+        ("[ / ]", "shift sync earlier / later"),
+        ("r", "reset sync offset"),
+        ("t", "translation on / off"),
+    ]
+    if HAVE_PYKAKASI:
+        keys.append(("y", "romanization on / off"))
+    if songrec_available:
+        keys += [
+            ("s", "identify the playing track"),
+            ("h", "identification history"),
+            ("b", "leave identify mode"),
+        ]
+    keys += [
+        ("z", "zen mode"),
+        ("m", "search lyrics"),
+        ("f", "alternate LRC"),
+        ("p", "next player"),
+        ("o", "settings"),
+        ("? or /", "this help"),
+        ("q", "quit"),
+    ]
+    rows = [Text.assemble((f"{k:<7}", f"bold {ACCENT}"), d) for k, d in keys]
+
+    panel = Panel(
+        Group(
+            *rows,
+            Text(""),
+            Text("any key to close", style="dim italic", justify="center"),
+        ),
+        border_style=ACCENT,
+        padding=(1, 4),
+        width=58,
+        title=" keys ",
+        title_align="left",
+    )
+    console.print(Align.center(panel, vertical="middle", height=max(console.height - 1, 1)))
+    poll_key(60)
+    live.start()
+
+
 # ------------------------------------------------------------ notifications
 
 def notify_shazam_match(artist, title, cover_path=None):
@@ -4272,34 +4325,14 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             progress.append(f"  ·  {_player_short_name(source_player)}", style="dim")
 
     # ── key hints (built once, used by all layouts) ───────────────────
-    row1, row2 = [], []
-    row1.append("spc play/pause")
-    if zoom_hint:
-        row1.append("+/- zoom")
-    row1.append(f"k karaoke:{'on' if karaoke_enabled else 'off'}")
-    if karaoke_enabled:
-        row1.append(f"d dbg:{'on' if debug_karaoke else 'off'}")
+    # The full key list lives in the '?' help panel. The footer keeps only
+    # the hint plus state that would otherwise be invisible.
+    row1 = ["? help"]
     if abs(sync_offset) > 0.001:
-        row1.append(f"[] sync:{sync_offset:+.2f}s")
-        row1.append("r reset")
-    else:
-        row1.append("[] sync")
-    if entries:
-        row2.append(f"t tr:{'on' if translate_enabled else 'off'}")
-        if HAVE_PYKAKASI:
-            row2.append(f"y rom:{'on' if romanize_enabled else 'off'}")
-    if shazam_hint:
-        row2.append("s identify")
-        row2.append("h history")
+        row1.append(f"sync:{sync_offset:+.2f}s")
     if shazam_active:
-        row2.append("b exit id")
-    row2.append(f"z zen:{'on' if ZEN_MODE else 'off'}")
-    row2.append("m search")
-    if entries:
-        row2.append("f alt LRC")
-    row2.append("p player")
-    row2.append("o settings")
-    row2.append("q quit")
+        row1.append("b exit id")
+    row2 = []
 
     blocks = []
     if layout == 4:
@@ -5729,6 +5762,11 @@ def main():
                         romanize_enabled = not romanize_enabled
                         if romanize_enabled and romanized is None:
                             romanized = romanize_lyrics(entries)
+                    elif ch in ("?", "/"):
+                        # Like the history panel this blocks while open and
+                        # deliberately does NOT reset last_frame_time, so
+                        # Shazam-mode position absorbs the time spent here.
+                        show_help(live, songrec_available)
                     elif ch in ("h", "H") and songrec_available:
                         # Deliberately NOT resetting last_frame_time here.
                         # show_shazam_history() blocks for however long the
