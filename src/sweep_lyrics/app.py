@@ -78,7 +78,7 @@ LRCLIB_API = "https://lrclib.net/api"
 CACHE_DIR = Path.home() / ".cache" / "sweep-lyrics"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-POLL_INTERVAL = 0.05   # ~20 fps wipe
+POLL_INTERVAL = 0.02   # ~50 fps wipe
 FULL_CHECK_INTERVAL = 1.0
 POS_POLL_INTERVAL = 0.2  # how often to actually spawn playerctl for position/status;
                          # frames in between use SmoothClock interpolation
@@ -1805,7 +1805,7 @@ _SETTINGS_CATEGORIES = [
         ("karaoke_hold_max",     "Held-word max (s, 0=off)", "float", 3.0,  0.0,   8.0,  0.5),
         ("karaoke_ease",         "Ease (0=lin, 1=smooth)",   "float", 0.35, 0.0,   1.0,  0.05),
         ("inter_word_pause",     "Inter-word pause weight",  "float", 0.45, 0.0,   1.5,  0.05),
-        ("poll_interval",        "Wipe refresh (s)",         "float", 0.05, 0.02,  0.20, 0.01),
+        ("poll_interval",        "Wipe refresh (s)",         "float", 0.02, 0.02,  0.20, 0.01),
     ]),
     ("onset", "Onset hybrid", [
         ("onset_enabled",        "Enabled",                  "bool",  True, None,  None, None),
@@ -1874,7 +1874,7 @@ def apply_settings(s):
     SHAZAM_OFFSET_FUDGE = float(s.get("shazam_offset_fudge", 2.0))
     CONTEXT_LINES = int(s.get("context_lines", 3))
     _INTER_WORD_PAUSE = float(s.get("inter_word_pause", 0.45))
-    POLL_INTERVAL = float(s.get("poll_interval", 0.05))
+    POLL_INTERVAL = float(s.get("poll_interval", 0.02))
     COVER_ACCENT_ENABLED = bool(s.get("cover_accent", False))
     try:
         LAYOUT_MODE = int(s.get("layout_mode", 0))
