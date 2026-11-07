@@ -1,4 +1,4 @@
-# Sweep
+# Sweep Lyrics
 
 Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPRIS and sweeps a soft-edged highlight across each word as it is sung.
 
@@ -26,7 +26,7 @@ Open a new shell afterwards so `~/.local/bin` is on your `PATH`.
 
 Install the required packages for your distro, then Sweep itself:
 
-    # Arch / CachyOS
+    # Arch based
     sudo pacman -S python-pipx kitty playerctl
 
     # Debian / Ubuntu
