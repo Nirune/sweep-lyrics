@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sweep-lyrics"
+version = "0.1.0"
+description = "Synced karaoke lyrics for the kitty terminal, driven by MPRIS, with a soft-edge word wipe"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["pillow", "numpy", "requests", "rich", "ytmusicapi"]
+
+[project.optional-dependencies]
+pykakasi = ["pykakasi"]
+cmudict = ["cmudict"]
+
+[project.scripts]
+sweeplyrics = "sweep_lyrics.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
