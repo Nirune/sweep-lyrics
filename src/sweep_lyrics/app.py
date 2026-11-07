@@ -4332,7 +4332,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
 
         # panel content rows ≈ height - borders(2) - padding(2)
         usable = max(8, height - 4)
-        body_h = max(1, len(body_lines))
+        body_h = max(1, sum(1 for t in body_lines if not (isinstance(t, Text) and not t.plain)))
         dock_h = len(dock_parts)
         free = max(1, usable - body_h - dock_h)
 
@@ -4385,9 +4385,9 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             footer_parts = []  # zen: lyrics only, no progress/hints
 
         usable = max(8, height - 4)
-        body_h = max(1, len(body_lines))
+        body_h = max(1, sum(1 for t in body_lines if not (isinstance(t, Text) and not t.plain)))
         header_h = len(header_parts)
-        footer_h = (len(footer_parts) + 1) if footer_parts else 0  # +1 gap above footer
+        footer_h = len(footer_parts)
         free = max(1, usable - header_h - body_h - footer_h)
 
         if ZEN_MODE or WORD_MODE:
