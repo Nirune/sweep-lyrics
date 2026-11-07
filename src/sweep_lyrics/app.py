@@ -1880,6 +1880,21 @@ _SETTINGS_CATEGORIES = [
 # flat list of all items (for defaults / load / apply)
 _SETTINGS_SCHEMA = [item for _, _, items in _SETTINGS_CATEGORIES for item in items]
 
+# Menu tree for the settings panel (the schema above stays flat).
+# "advanced" is a group: it opens a submenu of the categories listed in
+# _SETTINGS_ADVANCED instead of an item list.
+_SETTINGS_TOP = ["layout", "display", "advanced"]
+_SETTINGS_ADVANCED = ["karaoke", "onset", "sync"]
+_SETTINGS_BLURBS = {
+    "layout": "mode and per-word look",
+    "display": "context lines, cover accent",
+    "advanced": "wipe timing, onset, sync",
+    "karaoke": "wipe timing and easing",
+    "onset": "audio onset snapping",
+    "sync": "offset step, shazam lag",
+}
+_SETTINGS_BY_KEY = {k: (label, items) for k, label, items in _SETTINGS_CATEGORIES}
+
 
 def _default_settings():
     return {k: default for k, _, _, default, *_ in _SETTINGS_SCHEMA}
@@ -1963,20 +1978,34 @@ _INTER_WORD_PAUSE = 0.45
 def show_settings(live, settings):
     """Hierarchical settings panel.
 
-    Top level — categories:
-      ↑/↓ select  ·  enter/→ open  ·  q/esc cancel
+    top       Layout · Display · Advanced ›
+    advanced  Karaoke / wipe · Onset hybrid · Sync
+    items     ↑↓ select · ←→/space change · r reset · enter save · esc back
 
-    Submenu — items in a category:
-      ↑/↓ select  ·  ←→/space change  ·  r reset
-      enter apply+save+close  ·  ←/esc back to categories  ·  q cancel
+    q cancels from anywhere. Unsaved edits are flagged with a yellow *.
     """
     live.stop()
     console = Console()
     draft = dict(settings)
-    # level: "cats" | "items"
-    level = "cats"
-    cat_idx = 0
-    item_idx = 0
+    level = "top"  # top | adv | items
+    cursor = {"top": 0, "adv": 0, "items": 0}
+    cat_key = None
+    back_to = "top"
+
+    tips = {
+        "layout_mode": "classic · cinema · timeline · hud · dock",
+        "word_mode": "one word at a time, big + centered",
+        "word_style": "dots/solid/text/sextant/scaled/image/ascii",
+        "word_gradient": "off/letter/column/wipe (wipe = karaoke fill)",
+        "word_size": "small · medium · large",
+        "onset_flux_pct": "lower = more sensitive (try 55-65 if n=0 a lot)",
+        "onset_min_interval": "lower = allow denser onsets (rap / fast vocals)",
+        "onset_blend": "0 = pure syllable  ·  1 = fully snap to onsets",
+        "onset_silence_rms": "raise if wipe freezes too often on quiet parts",
+        "shazam_offset_fudge": "extra lag compensation after SongRec match",
+    }
+    menu_tips = {"advanced": "tuning knobs, safe to leave alone"}
+    named = ("layout_mode", "word_size", "word_style", "word_gradient")
 
     def _fmt(val, typ, key=None):
         if key == "word_gradient":
@@ -2005,86 +2034,139 @@ def show_settings(live, settings):
             return f"{float(val):.3f}".rstrip("0").rstrip(".")
         return str(val)
 
+    def _same(a, b):
+        try:
+            return abs(float(a) - float(b)) < 1e-9
+        except (TypeError, ValueError):
+            return a == b
+
+    def _any_dirty():
+        return any(
+            not _same(draft[k], settings.get(k, d))
+            for k, _l, _t, d, *_ in _SETTINGS_SCHEMA
+        )
+
+    def _bar(val, lo, hi, selected, n=12):
+        span = float(hi) - float(lo)
+        frac = 0.0 if span <= 0 else (float(val) - float(lo)) / span
+        pos = int(round(max(0.0, min(1.0, frac)) * (n - 1)))
+        on = f"bold {ACCENT}" if selected else "dim"
+        bar = Text()
+        bar.append("━" * pos, style=on)
+        bar.append("●", style=on)
+        bar.append("─" * (n - 1 - pos), style="dim")
+        return bar
+
+    def _marker(selected):
+        return Text("›" if selected else " ", style=f"bold {ACCENT}")
+
+    def _menu_table(keys):
+        t = Table.grid(expand=True, padding=(0, 1))
+        t.add_column(width=1)
+        t.add_column(width=16, no_wrap=True)
+        t.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
+        t.add_column(width=1)
+        cur = cursor[level]
+        for i, key in enumerate(keys):
+            sel = i == cur
+            if key == "advanced":
+                label = "Advanced"
+            else:
+                label = _SETTINGS_BY_KEY[key][0]
+            t.add_row(
+                _marker(sel),
+                Text(label, style=f"bold {ACCENT}" if sel else ""),
+                Text(_SETTINGS_BLURBS.get(key, ""), style="dim"),
+                Text("›", style=f"bold {ACCENT}" if sel else "dim"),
+            )
+        return t
+
+    def _items_table(items):
+        t = Table.grid(expand=True, padding=(0, 1))
+        t.add_column(width=1)
+        t.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
+        t.add_column(width=12)
+        t.add_column(width=13, justify="right", no_wrap=True)
+        cur = cursor["items"]
+        for i, item in enumerate(items):
+            key, label, typ, default, lo, hi, step = item
+            sel = i == cur
+            val = draft[key]
+            hot = f"bold {ACCENT}" if sel else ""
+            name = Text(label, style=hot)
+            if not _same(val, settings.get(key, default)):
+                name.append(" *", style="yellow")
+            control = Text("")
+            if typ == "bool":
+                value = Text(
+                    "● on" if val else "○ off",
+                    style=(f"bold {ACCENT}" if sel else ACCENT) if val else "dim",
+                )
+            elif key in named:
+                s = _fmt(val, typ, key=key)
+                value = Text(f"‹ {s} ›" if sel else s, style=hot or "dim")
+            else:
+                control = _bar(val, lo, hi, sel)
+                value = Text(_fmt(val, typ, key=key), style=hot or "dim")
+            t.add_row(_marker(sel), name, control, value)
+        return t
+
     def _render():
         console.clear()
-        rows = []
-        extra = None  # optional one-line tip under selected item
-        if level == "cats":
-            title = "settings"
-            hint = "↑↓  ·  enter/→ open  ·  q/esc cancel"
-            for i, (_, label, items) in enumerate(_SETTINGS_CATEGORIES):
-                marker = "›" if i == cat_idx else " "
-                count = len(items)
-                if i == cat_idx:
-                    line = Text()
-                    line.append(f" {marker} ", style=f"bold {ACCENT}")
-                    line.append(f"{label}", style=f"bold {ACCENT}")
-                    line.append(f"  · {count}", style="dim")
-                else:
-                    line = Text(f" {marker} {label}  · {count}", style="dim")
-                rows.append(line)
-        else:
-            _, cat_label, items = _SETTINGS_CATEGORIES[cat_idx]
-            title = cat_label.lower()
-            hint = "↑↓  ·  ←→/space  ·  r reset  ·  enter apply  ·  esc back"
-            for i, (key, label, typ, default, lo, hi, step) in enumerate(items):
-                val_s = _fmt(draft[key], typ, key=key)
-                marker = "›" if i == item_idx else " "
-                if i == item_idx:
-                    line = Text()
-                    line.append(f" {marker} ", style=f"bold {ACCENT}")
-                    line.append(f"{label:<28}", style=f"bold {ACCENT}")
-                    line.append(f" {val_s}", style=f"bold {ACCENT}")
-                    tip = None
-                    if key == "layout_mode":
-                        tip = "classic · cinema · timeline · hud · dock  (←→)"
-                    elif key == "word_mode":
-                        tip = "one word at a time, big + centered"
-                    elif key == "word_style":
-                        tip = "dots/solid/text/sextant/scaled/image/ascii"
-                    elif key == "word_gradient":
-                        tip = "off/letter/column/wipe (wipe = karaoke fill)"
-                    elif key == "word_size":
-                        tip = "small · medium · large  (←→)"
-                    elif key == "onset_flux_pct":
-                        tip = "lower = more sensitive (try 55–65 if n=0 a lot)"
-                    elif key == "onset_min_interval":
-                        tip = "lower = allow denser onsets (rap / fast vocals)"
-                    elif key == "onset_blend":
-                        tip = "0 = pure syllable  ·  1 = fully snap to onsets"
-                    elif key == "onset_silence_rms":
-                        tip = "raise if wipe freezes too often on quiet parts"
-                    elif key == "shazam_offset_fudge":
-                        tip = "extra lag compensation after SongRec match"
-                    if tip:
-                        extra = Text(f"     {tip}", style="dim")
-                    elif typ != "bool" and lo is not None and hi is not None:
-                        extra = Text(
-                            f"     range {lo} … {hi}  ·  step {step}  ·  default {_fmt(default, typ)}",
-                            style="dim",
-                        )
-                else:
-                    line = Text(f" {marker} {label:<28} {val_s}", style="dim")
-                rows.append(line)
+        width = max(40, min(console.width - 2, 72))
 
-        body = [
-            Text(title, style=f"bold {ACCENT}", justify="center"),
-            Text(""),
-            *rows,
-        ]
-        if extra is not None:
-            body.append(Text(""))
-            body.append(extra)
-        body.append(Text(""))
-        body.append(Text(hint, style="dim italic", justify="center"))
+        crumb = Text()
+        parts = ["settings"]
+        if level == "adv" or (level == "items" and back_to == "adv"):
+            parts.append("advanced")
+        if level == "items":
+            parts.append(_SETTINGS_BY_KEY[cat_key][0].lower())
+        for i, p in enumerate(parts):
+            last = i == len(parts) - 1
+            crumb.append(p, style=f"bold {ACCENT}" if last else "dim")
+            if not last:
+                crumb.append("  ›  ", style="dim")
+
+        tip = ""
+        if level == "top":
+            body = _menu_table(_SETTINGS_TOP)
+            tip = menu_tips.get(_SETTINGS_TOP[cursor["top"]], "")
+            hint = "↑↓ move · enter open · q close"
+        elif level == "adv":
+            body = _menu_table(_SETTINGS_ADVANCED)
+            hint = "↑↓ move · enter open · esc back · q close"
+        else:
+            items = _SETTINGS_BY_KEY[cat_key][1]
+            body = _items_table(items)
+            key, _label, typ, default, lo, hi, step = items[cursor["items"]]
+            tip = tips.get(key, "")
+            if not tip and typ != "bool" and lo is not None and hi is not None:
+                tip = (
+                    f"{lo} … {hi}  ·  step {step}  ·  "
+                    f"default {_fmt(default, typ, key=key)}"
+                )
+            hint = "↑↓ move · ←→ change · r reset · enter save · esc back"
+
+        status = Text(" ")
+        if level == "items" and _any_dirty():
+            status = Text("* unsaved · enter saves", style="yellow")
 
         panel = Panel(
-            Group(*body),
+            Group(
+                crumb,
+                Text(""),
+                body,
+                Text(""),
+                Text(tip or " ", style="dim"),
+                status,
+            ),
             border_style=ACCENT,
             padding=(1, 3),
-            width=58,
-            title=" settings ",
+            width=width,
+            title=" Sweep Lyrics ",
             title_align="left",
+            subtitle=Text(f" {hint} ", style="dim italic"),
+            subtitle_align="center",
         )
         console.print(Align.center(panel))
 
@@ -2109,29 +2191,42 @@ def show_settings(live, settings):
         if ch is None:
             continue
 
-        if level == "cats":
-            n_cats = len(_SETTINGS_CATEGORIES)
-            if ch in ("q", "Q", "esc"):
+        if ch in ("q", "Q"):
+            applied = False
+            break
+
+        if level in ("top", "adv"):
+            entries = _SETTINGS_TOP if level == "top" else _SETTINGS_ADVANCED
+            n = len(entries)
+            if ch == "esc":
+                if level == "adv":
+                    level = "top"
+                    continue
                 applied = False
                 break
             if ch == "up":
-                cat_idx = (cat_idx - 1) % n_cats
+                cursor[level] = (cursor[level] - 1) % n
             elif ch == "down":
-                cat_idx = (cat_idx + 1) % n_cats
+                cursor[level] = (cursor[level] + 1) % n
             elif ch in ("enter", "right", " "):
-                level = "items"
-                item_idx = 0
+                entry = entries[cursor[level]]
+                if entry == "advanced":
+                    level = "adv"
+                else:
+                    cat_key = entry
+                    back_to = level
+                    cursor["items"] = 0
+                    level = "items"
+            elif ch == "left" and level == "adv":
+                level = "top"
         else:
-            items = _SETTINGS_CATEGORIES[cat_idx][2]
+            items = _SETTINGS_BY_KEY[cat_key][1]
             n_items = len(items)
-            item = items[item_idx]
+            item = items[cursor["items"]]
             key, label, typ, default, lo, hi, step = item
 
-            if ch in ("q", "Q"):
-                applied = False
-                break
             if ch == "esc":
-                level = "cats"
+                level = back_to
                 continue
             if ch == "enter":
                 settings.clear()
@@ -2141,9 +2236,9 @@ def show_settings(live, settings):
                 applied = True
                 break
             if ch == "up":
-                item_idx = (item_idx - 1) % n_items
+                cursor["items"] = (cursor["items"] - 1) % n_items
             elif ch == "down":
-                item_idx = (item_idx + 1) % n_items
+                cursor["items"] = (cursor["items"] + 1) % n_items
             elif ch in ("r", "R"):
                 draft[key] = default
             elif ch in ("left", "right", "+", "-", " "):
