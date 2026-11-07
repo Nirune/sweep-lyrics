@@ -1793,7 +1793,7 @@ _LAYOUT_NAMES = ("classic", "cinema", "timeline", "hud", "dock")
 _SETTINGS_CATEGORIES = [
     ("layout", "Layout", [
         ("layout_mode",          "Mode",                     "int",   0,    0,     4,    1),
-        ("word_mode",            "Per-word mode",            "bool",  False, None, None, None),
+        ("word_mode",            "Per-word mode",            "bool",  True,  None, None, None),
         ("word_size",            "Per-word size",            "int",   1,    0,     2,    1),
         ("word_style",           "Per-word style",           "int",   1,    0,     6,    1),
         ("word_gradient",        "Per-word gradient",        "int",   0,    0,     3,    1),
@@ -1881,7 +1881,7 @@ def apply_settings(s):
     except (TypeError, ValueError):
         LAYOUT_MODE = 0
     LAYOUT_MODE = max(0, min(4, LAYOUT_MODE))
-    WORD_MODE = bool(s.get("word_mode", False))
+    WORD_MODE = bool(s.get("word_mode", True))
     try:
         WORD_SIZE = max(0, min(2, int(s.get("word_size", 1))))
     except (TypeError, ValueError):
@@ -1900,7 +1900,7 @@ LAYOUT_MODE = 0  # 0 classic · 1 cinema · 2 timeline · 3 hud · 4 dock
 WORD_GRADIENT = 0  # 0 off · 1 letter · 2 column · 3 wipe (per-word mode)
 WORD_STYLE = 1  # 0 dots · 1 solid · 2 text · 3 sextant · 4 scaled (OSC 66) · 5 image · 6 ascii
 WORD_SIZE = 1  # 0 small · 1 medium · 2 large (per-word mode)
-WORD_MODE = False  # True → show only the currently sung word, big + centered
+WORD_MODE = True  # True → show only the currently sung word, big + centered
 
 
 # runtime inter-word pause (overridable via settings; _char_weights reads it)
