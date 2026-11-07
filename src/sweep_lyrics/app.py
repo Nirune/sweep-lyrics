@@ -476,6 +476,10 @@ def get_metadata(player):
     for field in ("title", "artist", "album", "art_url", "track_url"):
         if (plasma.get(field) or "").strip():
             merged[field] = plasma[field]
+    if not (plasma.get("art_url") or "").strip():
+        # art_url from Brave belongs to its idle placeholder (its own icon);
+        # blank it so the cover is derived from track_url instead.
+        merged["art_url"] = ""
     if (plasma.get("duration") or 0) > 0:
         merged["duration"] = plasma["duration"]
     return merged
