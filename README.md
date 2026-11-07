@@ -66,7 +66,7 @@ Keys:
 - `k` karaoke on/off
 - `t` translation
 - `y` romanization (needs pykakasi)
-- `z` zen mode
+- `z` minimal mode (hides everything except play/pause and the progress bar)
 - `m` search
 - `f` alternate LRC
 - `p` cycle to the next MPRIS player (when more than one is running)

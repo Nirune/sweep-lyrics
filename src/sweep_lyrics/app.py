@@ -1718,7 +1718,7 @@ def show_help(live, songrec_available=False):
             ("b", "leave identify mode"),
         ]
     keys += [
-        ("z", "zen mode"),
+        ("z", "minimal mode"),
         ("m", "search lyrics"),
         ("f", "alternate LRC"),
         ("p", "next player"),
@@ -2476,7 +2476,7 @@ COVER_ACCENT_ENABLED = False
 COVER_ACCENT_HEX = None
 COVER_ACCENT_RGB = None  # cached (r,g,b) companion
 
-# Zen / mini mode — toggled with 'z'. Collapses context lines and chrome
+# Minimal mode (ZEN_MODE internally) — toggled with 'z'. Collapses context lines and chrome
 # so only the active lyric (+ optional translation) stays on screen.
 ZEN_MODE = False
 
