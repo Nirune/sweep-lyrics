@@ -354,6 +354,7 @@ def find_active_player(preferred=None):
     listed = playerctl("-l")
     if not listed:
         find_active_player._stale.clear()
+        find_active_player._title_seen.clear()
         return None, None
 
     players = [p.strip() for p in listed.splitlines() if p.strip()]
@@ -395,6 +396,22 @@ def find_active_player(preferred=None):
 
     # --- someone is Playing: never stay locked on a Paused preferred ---
     if playing:
+        # Several Playing players (Brave native + plasma-browser-integration):
+        # the one whose title changed most recently is the real source. A stale
+        # one keeps its old title/duration while its position keeps advancing,
+        # which is how a locked preferred can show the previous song.
+        if len(playing) > 1:
+            _track_titles(playing)
+            seen = find_active_player._title_seen
+            fresh = max(playing, key=lambda q: seen[q][1])
+            fresh_t = seen[fresh][1]
+            pref_t = seen[preferred][1] if preferred in seen else 0.0
+            pref_title = seen[preferred][0] if preferred in seen else ""
+            if (fresh_t > 0 and fresh != preferred and fresh_t > pref_t
+                    and _norm_title(seen[fresh][0]) != _norm_title(pref_title)):
+                find_active_player._stale.pop(preferred, None)
+                return fresh, "Playing"
+
         # If preferred is among Playing and still advancing, keep it
         # (stable lock while you watch lyrics in the terminal).
         if preferred and preferred in playing:
@@ -443,6 +460,35 @@ STOPPED_GRACE_SECONDS = 4.0
 # Per-player wall-clock timestamp of when a "Stopped" blip was first seen,
 # used by the grace-period check above.
 find_active_player._stopped_since = {}
+
+# Per-player (last_title, wall_time_title_last_changed) - see the
+# multi-Playing override in find_active_player.
+find_active_player._title_seen = {}
+
+
+def _norm_title(t):
+    """Strip YouTube-Music-style title suffixes for comparison only."""
+    t = (t or "").strip()
+    i = t.rfind(" | ")
+    if i > 0 and t[i + 3:].strip().lower() in {
+            "youtube", "youtube music", "soundcloud", "spotify",
+            "brave", "chrome", "chromium", "firefox"}:
+        t = t[:i]
+    return t.strip().lower()
+
+
+def _track_titles(players):
+    """Remember when each players title last changed. Blank titles are
+    ignored (Chromium blanks them between tracks)."""
+    now = time.time()
+    seen = find_active_player._title_seen
+    for p in players:
+        title = (playerctl("metadata", "xesam:title", player=p) or "").strip()
+        prev = seen.get(p)
+        if prev is None:
+            seen[p] = (title, 0.0)  # first sight: no change time yet
+        elif title and title != prev[0]:
+            seen[p] = (title, now)
 
 
 def get_metadata(player):
