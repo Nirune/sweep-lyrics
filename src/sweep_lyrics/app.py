@@ -237,7 +237,8 @@ TRANSLATE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # kitten. Only attempted inside Kitty; silently skipped everywhere else
 # (or if a track has no art / the fetch fails) — the lyrics box just
 # uses the full width in that case, same as before this feature existed.
-COVER_ENABLED = bool(os.environ.get("KITTY_WINDOW_ID")) and shutil.which("kitty") is not None
+COVER_AVAILABLE = bool(os.environ.get("KITTY_WINDOW_ID")) and shutil.which("kitty") is not None
+COVER_ENABLED = COVER_AVAILABLE  # also driven by the 'show_cover' setting (apply_settings)
 COVER_CACHE_DIR = CACHE_DIR / "covers"
 COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 COVER_COLS = 28        # terminal cells wide (was 24 — felt small/lost)
@@ -1873,6 +1874,7 @@ _SETTINGS_CATEGORIES = [
     ]),
     ("display", "Display", [
         ("context_lines",        "Context lines (min)",      "int",   3,    1,     9,    1),
+        ("show_cover",           "Show artwork",             "bool",  True,  None, None, None),
         ("cover_accent",         "Accent from cover art",    "bool",  False, None, None, None),
     ]),
 ]
@@ -1928,6 +1930,7 @@ def apply_settings(s):
     global CONTEXT_LINES, _INTER_WORD_PAUSE, POLL_INTERVAL
     global ONSET_FLUX_PERCENTILE, ONSET_MIN_INTERVAL, SHAZAM_OFFSET_FUDGE
     global LAYOUT_MODE, COVER_ACCENT_ENABLED, WORD_MODE, WORD_SIZE, WORD_STYLE, WORD_GRADIENT
+    global COVER_ENABLED
     KARAOKE_LEAD = float(s.get("karaoke_lead", 0.6))
     KARAOKE_HOLD_MAX = float(s.get("karaoke_hold_max", 3.0))
     KARAOKE_SECONDS_PER_WORD = float(s.get("karaoke_sec_per_word", 0.6))
@@ -1944,6 +1947,7 @@ def apply_settings(s):
     _INTER_WORD_PAUSE = float(s.get("inter_word_pause", 0.45))
     POLL_INTERVAL = float(s.get("poll_interval", 0.02))
     COVER_ACCENT_ENABLED = bool(s.get("cover_accent", False))
+    COVER_ENABLED = COVER_AVAILABLE and bool(s.get("show_cover", True))
     try:
         LAYOUT_MODE = int(s.get("layout_mode", 0))
     except (TypeError, ValueError):
@@ -1995,6 +1999,7 @@ def show_settings(live, settings):
     tips = {
         "layout_mode": "classic · cinema · timeline · hud · dock",
         "word_mode": "one word at a time, big + centered",
+        "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
         "word_style": "dots/solid/text/sextant/scaled/image/ascii",
         "word_gradient": "off/letter/column/wipe (wipe = karaoke fill)",
         "word_size": "small · medium · large",
@@ -4467,6 +4472,10 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         if ZEN_MODE or WORD_MODE:
             above = free // 2
             below = free - above
+            want_above = (usable - body_h) // 2
+            if want_above >= 0 and free - want_above >= 0:
+                above = want_above
+                below = free - above
             blocks.extend([Text("")] * above)
             blocks.append(body)
             blocks.extend([Text("")] * below)
@@ -4523,6 +4532,12 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             # centered between the (empty) top and the footer
             above = free // 2
             below = free - above
+            # center on the PANEL, not just on the leftover space between
+            # a tall header and a short footer; fall back if it won't fit
+            want_above = (usable - body_h) // 2 - header_h
+            if want_above >= 0 and free - want_above >= 0:
+                above = want_above
+                below = free - above
             blocks.extend(header_parts)  # empty in zen when cover shown
             blocks.extend([Text("")] * above)
             blocks.append(body)
@@ -5940,9 +5955,18 @@ def main():
                         # live.stop()/clear wipes Kitty's graphics layer, so
                         # re-place the cover art if we had one showing
                         # (dock layout puts it at the bottom)
-                        if cover_path and COVER_ENABLED:
-                            show_cover(cover_path, term_height=console.size.height)
-                            cover_offset = COVER_GUTTER
+                        if not COVER_ENABLED:
+                            # artwork switched off in settings
+                            cover_path = None
+                            cover_offset = 0
+                        else:
+                            if cover_path is None and last_cover_url:
+                                # switched back on: fetch art for the current track
+                                cover_path = fetch_cover(last_cover_url)
+                                extract_cover_accent(cover_path)
+                            if cover_path:
+                                show_cover(cover_path, term_height=console.size.height)
+                                cover_offset = COVER_GUTTER
                         # if onset was just disabled, stop the capture process
                         if not ONSET_ENABLED and onset_tracker is not None:
                             onset_tracker.stop()
