@@ -5862,6 +5862,7 @@ def main():
                         # deliberately does NOT reset last_frame_time, so
                         # Shazam-mode position absorbs the time spent here.
                         show_help(live, songrec_available)
+                        if cover_path and COVER_ENABLED: show_cover(cover_path, term_height=console.size.height)
                     elif ch in ("h", "H") and songrec_available:
                         # Deliberately NOT resetting last_frame_time here.
                         # show_shazam_history() blocks for however long the
@@ -5877,6 +5878,7 @@ def main():
                         # history view was open (resetting it here was the
                         # bug: it silently erased that elapsed time).
                         show_shazam_history(live)
+                        if cover_path and COVER_ENABLED: show_cover(cover_path, term_height=console.size.height)
                     elif ch in ("s", "S"):
                         # Manual re-identify — always listens again, even
                         # while already in Shazam mode (e.g. the current
