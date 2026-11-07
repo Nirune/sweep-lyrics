@@ -1795,8 +1795,8 @@ _SETTINGS_CATEGORIES = [
         ("layout_mode",          "Mode",                     "int",   0,    0,     4,    1),
         ("word_mode",            "Per-word mode",            "bool",  True,  None, None, None),
         ("word_size",            "Per-word size",            "int",   1,    0,     2,    1),
-        ("word_style",           "Per-word style",           "int",   1,    0,     6,    1),
-        ("word_gradient",        "Per-word gradient",        "int",   0,    0,     3,    1),
+        ("word_style",           "Per-word style",           "int",   5,    0,     6,    1),
+        ("word_gradient",        "Per-word gradient",        "int",   3,    0,     3,    1),
     ]),
     ("karaoke", "Karaoke / wipe", [
         ("karaoke_lead",         "Lead (s)",                 "float", 0.6,  0.0,   2.0,  0.05),
@@ -1887,18 +1887,18 @@ def apply_settings(s):
     except (TypeError, ValueError):
         WORD_SIZE = 1
     try:
-        WORD_GRADIENT = max(0, min(3, int(s.get("word_gradient", 0))))
+        WORD_GRADIENT = max(0, min(3, int(s.get("word_gradient", 3))))
     except (TypeError, ValueError):
         WORD_GRADIENT = 0
     try:
-        WORD_STYLE = max(0, min(6, int(s.get("word_style", 1))))
+        WORD_STYLE = max(0, min(6, int(s.get("word_style", 5))))
     except (TypeError, ValueError):
         WORD_STYLE = 1
 
 
 LAYOUT_MODE = 0  # 0 classic · 1 cinema · 2 timeline · 3 hud · 4 dock
-WORD_GRADIENT = 0  # 0 off · 1 letter · 2 column · 3 wipe (per-word mode)
-WORD_STYLE = 1  # 0 dots · 1 solid · 2 text · 3 sextant · 4 scaled (OSC 66) · 5 image · 6 ascii
+WORD_GRADIENT = 3  # 0 off · 1 letter · 2 column · 3 wipe (per-word mode)
+WORD_STYLE = 5  # 0 dots · 1 solid · 2 text · 3 sextant · 4 scaled (OSC 66) · 5 image · 6 ascii
 WORD_SIZE = 1  # 0 small · 1 medium · 2 large (per-word mode)
 WORD_MODE = True  # True → show only the currently sung word, big + centered
 
