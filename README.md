@@ -65,15 +65,18 @@ Keys:
 - `+` / `-` zoom
 - `k` karaoke on/off
 - `t` translation
+- `y` romanization (needs pykakasi)
 - `z` zen mode
 - `m` search
 - `f` alternate LRC
 - `p` cycle to the next MPRIS player (when more than one is running)
 - `s` Shazam mode (identify the playing track), `b` to leave it
+- `h` Shazam identification history
 - `[` / `]` shift sync earlier / later, remembered per track
 - `r` reset the sync offset
 - `d` debug
 - `o` settings
+- `?` or `/` show all key bindings
 - `q` quit
 
 Settings are saved between runs, so anything you toggle (including per-word mode) stays as you left it.
