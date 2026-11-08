@@ -2,7 +2,7 @@
 
 Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPRIS and sweeps a soft-edged highlight across each word as it is sung.
 
-<!-- demo GIF goes here once recorded: docs/demo.gif -->
+![Sweep Lyrics demo](docs/demo.gif)
 
 ## Features
 
