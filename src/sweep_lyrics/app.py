@@ -1883,8 +1883,8 @@ SETTINGS_FILE = CACHE_DIR / "settings.json"
 # Hierarchical settings: categories → items
 # item tuple: (key, label, type, default, min, max, step)
 # type: "float" | "bool" | "int"
-# layout_mode is int 0..4 → classic / cinema / timeline / hud / dock
-_LAYOUT_NAMES = ("classic", "cinema", "timeline", "hud", "dock")
+# layout_mode is int 0..4 → classic / bait / timeline / hud / dock
+_LAYOUT_NAMES = ("classic", "bait", "timeline", "hud", "dock")
 
 _SETTINGS_CATEGORIES = [
     ("layout", "Layout", [
@@ -2010,7 +2010,7 @@ def apply_settings(s):
         WORD_STYLE = 1
 
 
-LAYOUT_MODE = 0  # 0 classic · 1 cinema · 2 timeline · 3 hud · 4 dock
+LAYOUT_MODE = 0  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock
 WORD_GRADIENT = 3  # 0 off · 1 letter · 2 column · 3 wipe (per-word mode)
 WORD_STYLE = 5  # 0 dots · 1 solid · 2 text · 3 sextant · 4 scaled (OSC 66) · 5 image · 6 ascii
 WORD_SIZE = 1  # 0 small · 1 medium · 2 large (per-word mode)
@@ -2039,7 +2039,7 @@ def show_settings(live, settings):
     back_to = "top"
 
     tips = {
-        "layout_mode": "classic · cinema · timeline · hud · dock",
+        "layout_mode": "classic · bait · timeline · hud · dock",
         "word_mode": "one word at a time, big + centered",
         "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
         "word_style": "dots/solid/text/sextant/scaled/image/ascii",
@@ -4060,6 +4060,53 @@ def karaoke_line(text, frac, accent_hex, word_timings=None, sync_pos=None,
     return t
 
 
+def _bait_bounds(entries, idx, max_lines=8):
+    """[start, end] of the stanza (bait) that contains entry `idx`.
+
+    A boundary sits next to a blank LRC row, or where the gap between two
+    lines is well above this track's usual spacing. A stanza longer than
+    `max_lines` is split into even pages so it always fits the panel."""
+    n = len(entries)
+    if n == 0:
+        return 0, -1
+    idx = max(0, min(n - 1, idx))
+
+    def blank(k):
+        return not (entries[k][1] or "").strip()
+
+    if blank(idx):  # instrumental gap: keep the last stanza on screen
+        k = idx
+        while k > 0 and blank(k):
+            k -= 1
+        idx = k
+    gaps = sorted(
+        entries[k + 1][0] - entries[k][0]
+        for k in range(n - 1)
+        if not blank(k) and not blank(k + 1) and entries[k + 1][0] > entries[k][0]
+    )
+    median = gaps[len(gaps) // 2] if gaps else 4.0
+    gap_limit = max(6.0, median * 2.2)
+
+    def boundary(k):  # between entry k and k + 1
+        if blank(k) or blank(k + 1):
+            return True
+        return entries[k + 1][0] - entries[k][0] > gap_limit
+
+    s = idx
+    while s > 0 and not boundary(s - 1):
+        s -= 1
+    e = idx
+    while e < n - 1 and not boundary(e):
+        e += 1
+    count = e - s + 1
+    if count > max_lines:
+        pages = -(-count // max_lines)
+        size = -(-count // pages)
+        page = (idx - s) // size
+        s, e = s + page * size, min(e, s + (page + 1) * size - 1)
+    return s, e
+
+
 def render_frame(artist, title, entries, pos, duration, status, width, height,
                   zoom_hint=True, shazam_hint=False, shazam_active=False,
                   cover_offset=0, reidentify_soon=False, auto_paused=False,
@@ -4096,12 +4143,12 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     available = max(0, height - reserved)
     context_lines = max(CONTEXT_LINES, min(MAX_CONTEXT_LINES, available // 2))
     # layout tweaks
-    layout = LAYOUT_MODE  # 0 classic · 1 cinema · 2 timeline · 3 hud · 4 dock
+    layout = LAYOUT_MODE  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock
     if ZEN_MODE or WORD_MODE:
         # mini mode — only the active line (and maybe one neighbor)
         context_lines = 0
-    elif layout == 1:  # cinema — film subtitle: active line only, lower third
-        context_lines = 0
+    elif layout == 1:  # bait — one stanza at a time (window comes from _bait_bounds)
+        pass
     elif layout == 2:  # timeline — same density as classic, the rail is its identity
         pass
     elif layout == 3:  # hud — prev / active / next in corner brackets
@@ -4178,6 +4225,8 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         idx = current_index(entries, sync_pos)
         start = max(0, idx - context_lines)
         end = min(len(entries) - 1, idx + context_lines)
+        if layout == 1 and not (ZEN_MODE or WORD_MODE):
+            start, end = _bait_bounds(entries, idx)
 
         line_start = entries[idx][0] if idx >= 0 else 0
         next_line_start = entries[idx + 1][0] if idx + 1 < len(entries) else max(line_start + 4, duration or line_start + 4)
@@ -4430,7 +4479,10 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                 distance = abs(i - idx)
                 if layout == 3 and distance > 1:
                     continue  # hud: only ±1 context
-                if distance == 1:
+                if layout == 1 and not (ZEN_MODE or WORD_MODE):
+                    # bait: finished lines recede, upcoming ones stay readable
+                    body_lines.append(Text(line_text, style="dim" if i < idx else "white"))
+                elif distance == 1:
                     body_lines.append(Text(line_text, style="white"))
                 elif distance == 2:
                     body_lines.append(Text(line_text, style="dim"))
@@ -4566,7 +4618,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         inner = Group(*blocks)
         centered = Align.center(inner, vertical="top")
     else:
-        # ── classic / cinema / timeline / hud ─────────────────────────
+        # ── classic / bait / timeline / hud ─────────────────────────
         # Same bottom-lock idea as dock: header + lyrics on top, progress
         # + hints pinned to the bottom via flexible spacer rows.
         # Zen mode: drop the header chrome and vertically center the
@@ -4609,8 +4661,8 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         footer_h = len(footer_parts)
         free = max(1, usable - header_h - body_h - footer_h)
 
-        cinema_sub = layout == 1 and bool(entries) and not (ZEN_MODE or WORD_MODE)
-        if ZEN_MODE or WORD_MODE or cinema_sub:
+        bait_sub = layout == 1 and bool(entries) and not (ZEN_MODE or WORD_MODE)
+        if ZEN_MODE or WORD_MODE or bait_sub:
             # split free space above/below so the lyric sits vertically
             # centered between the (empty) top and the footer
             above = free // 2
@@ -4620,10 +4672,6 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             want_above = (usable - body_h) // 2 - header_h
             if want_above >= 0 and free - want_above >= 0:
                 above = want_above
-                below = free - above
-            if cinema_sub:
-                # film-subtitle placement: lower third, above the progress bar
-                above = free * 2 // 3
                 below = free - above
             blocks.extend(header_parts)  # empty in zen when cover shown
             blocks.extend([Text("")] * above)
