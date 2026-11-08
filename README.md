@@ -100,7 +100,7 @@ Lyrics are fetched at runtime from third-party services and are never bundled wi
 
 ## 🙏 Acknowledgements
 
-Sweep does not bundle any lyrics. It looks them up at runtime from these services; all lyrics belong to their respective rights holders.
+Sweep ships without any lyrics. Everything is fetched live from the services below, and the lyrics stay with their owners.
 
 - [LRCLIB](https://lrclib.net): free, open synced-lyrics database
 - Better Lyrics, Unison, LyricsPlus, KuGou and YouTube Music: additional lyric sources, through their unofficial public endpoints
@@ -109,13 +109,13 @@ Sweep does not bundle any lyrics. It looks them up at runtime from these service
 - [Rich](https://github.com/Textualize/rich), [pykakasi](https://github.com/miurahr/pykakasi), [cmudict](https://github.com/prosegrinder/python-cmudict): rendering, Japanese romanization and pronunciation data, each under its own license
 - [Dux Shell](https://github.com/duxlabs-dev/dux-shell) (MIT): inspiration for the multi-provider lookup and the soft-edge wipe
 
-The unofficial endpoints are not affiliated with Sweep and can change or stop working at any time. Sweep is not affiliated with YouTube, Shazam or any other service named here.
+Several of these are unofficial endpoints that may break without notice. None of the services named here are affiliated with Sweep.
 
 ## 👤 Author
 
-Created and maintained by [@Nirune](https://github.com/Nirune).
+Made by [@Nirune](https://github.com/Nirune).
 
-Sweep is built with AI assistance from Claude (Anthropic), ChatGPT (OpenAI) and Grok (xAI, used for the UI design). Direction, testing and final decisions are by the author.
+AI tools helped along the way: Claude (Anthropic), ChatGPT (OpenAI) and Grok (xAI, for the UI design). I decide what ships and I test it myself.
 
 ## 📄 License
 
