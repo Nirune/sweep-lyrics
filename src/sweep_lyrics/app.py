@@ -4078,6 +4078,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     columns so it doesn't get drawn over the image area."""
     panel_width = max(20, width - cover_offset)
     body_lines = []
+    timeline_active = set()  # id()s of body_lines entries that get the bold rail segment
 
     # One shared line for both render paths below (with/without cover) —
     # auto_paused takes priority since it's the more actionable state.
@@ -4089,7 +4090,9 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
 
     # fill more of a tall terminal with actual lyric context instead of
     # leaving a fixed small block surrounded by empty space
-    reserved = 11  # border/padding/header/gaps/progress/hint, roughly
+    # border/padding/header/gaps/progress/hint, roughly; the top header
+    # (shown only without cover art) needs two more rows or a full window overflows
+    reserved = 13 if (not cover_offset and not ZEN_MODE and LAYOUT_MODE != 4) else 11
     available = max(0, height - reserved)
     context_lines = max(CONTEXT_LINES, min(MAX_CONTEXT_LINES, available // 2))
     # layout tweaks
@@ -4097,12 +4100,12 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     if ZEN_MODE or WORD_MODE:
         # mini mode — only the active line (and maybe one neighbor)
         context_lines = 0
-    elif layout == 1:  # cinema — fewer lines, cover does the talking
-        context_lines = max(1, min(context_lines, 3))
-    elif layout == 2:  # timeline — denser stack
-        context_lines = max(context_lines, min(MAX_CONTEXT_LINES, available // 2 + 1))
-    elif layout == 3:  # hud — ultra minimal
-        context_lines = max(1, min(2, context_lines))
+    elif layout == 1:  # cinema — film subtitle: active line only, lower third
+        context_lines = 0
+    elif layout == 2:  # timeline — same density as classic, the rail is its identity
+        pass
+    elif layout == 3:  # hud — prev / active / next in corner brackets
+        context_lines = 1
     elif layout == 4:  # dock — lyrics own the upper area
         context_lines = max(CONTEXT_LINES, min(MAX_CONTEXT_LINES, available // 2))
 
@@ -4404,17 +4407,18 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                                   if next_line_start and next_line_start > line_start
                                   else None),
                     )
-                    if layout == 2:  # timeline — side rail
-                        rail = Text()
-                        rail.append("▌ ", style=active_accent_hex)
-                        rail.append_text(kl if isinstance(kl, Text) else Text(str(kl)))
-                        body_lines.append(rail)
-                    else:
-                        body_lines.append(kl)
+                    if layout == 2:  # timeline — rail is drawn when body is assembled
+                        kl = kl if isinstance(kl, Text) else Text(str(kl))
+                        timeline_active.add(id(kl))
+                    body_lines.append(kl)
                 else:
-                    marked = Text()
-                    marked.append("▌ ", style=active_accent_hex)
-                    marked.append(line_text, style=f"bold {active_accent_hex}")
+                    if layout == 2:
+                        marked = Text(line_text, style=f"bold {active_accent_hex}")
+                        timeline_active.add(id(marked))
+                    else:
+                        marked = Text()
+                        marked.append("▌ ", style=active_accent_hex)
+                        marked.append(line_text, style=f"bold {active_accent_hex}")
                     body_lines.append(marked)
                 if translate_enabled and translations and i < len(translations) and translations[i]:
                     body_lines.append(Text(translations[i], style="dim italic"))
@@ -4433,7 +4437,41 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                 else:
                     body_lines.append(Text(line_text, style="rgb(70,70,85)"))
 
-    body = Group(*[Align.center(t) for t in body_lines])
+    hud_boxed = False
+    if layout == 2 and entries and not (ZEN_MODE or WORD_MODE):
+        # timeline: lyrics left-aligned, one continuous vertical rail on
+        # their left; the active line's segment is bold + accent
+        tl = Table.grid(padding=0)
+        tl.add_column(width=2, no_wrap=True)
+        tl.add_column()
+        for t in body_lines:
+            if isinstance(t, Text) and not t.plain:
+                continue  # spacers render 0 rows in the other layouts too
+            if id(t) in timeline_active:
+                tl.add_row(Text("┃ ", style=f"bold {active_accent_hex}"), t)
+            else:
+                tl.add_row(Text("│ ", style=f"dim {ACCENT}"), t)
+        body = Align.center(tl)
+    elif layout == 3 and entries and not (ZEN_MODE or WORD_MODE):
+        # hud: the 3-line readout sits in corner brackets only
+        from rich import box as _box
+        hud_boxed = True
+        _hud_box = _box.Box(
+            "┌  ┐\n"
+            "    \n"
+            "    \n"
+            "    \n"
+            "    \n"
+            "    \n"
+            "    \n"
+            "└  ┘\n"
+        )
+        body = Align.center(Panel(
+            Group(*[Align.center(t) for t in body_lines]),
+            box=_hud_box, border_style=ACCENT, padding=(0, 3), expand=False,
+        ))
+    else:
+        body = Group(*[Align.center(t) for t in body_lines])
 
     # ── progress (live head + pct chip) ───────────────────────────────
     playing = status == "Playing"
@@ -4565,11 +4603,14 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
 
         usable = max(8, height - 4)
         body_h = max(1, sum(1 for t in body_lines if not (isinstance(t, Text) and not t.plain)))
+        if hud_boxed:
+            body_h += 2  # bracket rows
         header_h = len(header_parts)
         footer_h = len(footer_parts)
         free = max(1, usable - header_h - body_h - footer_h)
 
-        if ZEN_MODE or WORD_MODE:
+        cinema_sub = layout == 1 and bool(entries) and not (ZEN_MODE or WORD_MODE)
+        if ZEN_MODE or WORD_MODE or cinema_sub:
             # split free space above/below so the lyric sits vertically
             # centered between the (empty) top and the footer
             above = free // 2
@@ -4579,6 +4620,10 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             want_above = (usable - body_h) // 2 - header_h
             if want_above >= 0 and free - want_above >= 0:
                 above = want_above
+                below = free - above
+            if cinema_sub:
+                # film-subtitle placement: lower third, above the progress bar
+                above = free * 2 // 3
                 below = free - above
             blocks.extend(header_parts)  # empty in zen when cover shown
             blocks.extend([Text("")] * above)
