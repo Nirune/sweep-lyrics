@@ -55,6 +55,16 @@ Optional (detected at runtime):
 - `fc-match` (fontconfig): locates a bold sans-serif font file
 - `niri` or `xdotool`: focused-window lookup on niri / X11, used to pick the matching player (falls back to the first playing one)
 
+## 🎵 Supported players
+Sweep follows any player that exposes MPRIS and shows up in `playerctl`. Tested with:
+
+- Spotify
+- YouTube Music
+- mpv (with the `mpv-mpris` plugin)
+- YouTube Music or Spotify in the browser
+
++Not sure whether yours is detected? Run `playerctl -l`. If it is listed, Sweep can follow it. With several players running, press `p` to switch between them.
+
 ## ⌨️ Usage
 
     sweeplyrics
