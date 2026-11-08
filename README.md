@@ -8,7 +8,7 @@ Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPR
 
 - Word-level karaoke wipe with a soft edge, with per-syllable timing estimated and calibrated per song
 - Several lyrics sources raced in parallel: Better Lyrics, Unison, LyricsPlus, KuGou, LRCLIB, YouTube Music
-- Per-word display mode (on by default), live translation, romanization
+- Per-word display mode (on by default) or classic full-lyrics view, live translation, romanization
 - Shazam mode: identify the track that is actually playing and sync to it
 - Highlight color follows your kitty theme
 
