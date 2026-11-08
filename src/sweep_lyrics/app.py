@@ -4139,7 +4139,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     # leaving a fixed small block surrounded by empty space
     # border/padding/header/gaps/progress/hint, roughly; the top header
     # (shown only without cover art) needs two more rows or a full window overflows
-    reserved = 13 if (not cover_offset and not ZEN_MODE and LAYOUT_MODE != 4) else 11
+    reserved = 15 if (not cover_offset and not ZEN_MODE and LAYOUT_MODE != 4) else 11
     available = max(0, height - reserved)
     context_lines = max(CONTEXT_LINES, min(MAX_CONTEXT_LINES, available // 2))
     # layout tweaks
@@ -4149,6 +4149,8 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         context_lines = 0
     elif layout == 1:  # bait — one stanza at a time (window comes from _bait_bounds)
         pass
+    elif layout == 0:  # classic — the old timeline look: one extra pair of context lines
+        context_lines = max(context_lines, min(MAX_CONTEXT_LINES, available // 2 + 1))
     elif layout == 2:  # timeline — same density as classic, the rail is its identity
         pass
     elif layout == 3:  # hud — prev / active / next in corner brackets
@@ -4459,7 +4461,14 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                     if layout == 2:  # timeline — rail is drawn when body is assembled
                         kl = kl if isinstance(kl, Text) else Text(str(kl))
                         timeline_active.add(id(kl))
-                    body_lines.append(kl)
+                        body_lines.append(kl)
+                    elif layout == 0:  # classic — accent block in front of the active line
+                        rail = Text()
+                        rail.append("▌ ", style=active_accent_hex)
+                        rail.append_text(kl if isinstance(kl, Text) else Text(str(kl)))
+                        body_lines.append(rail)
+                    else:
+                        body_lines.append(kl)
                 else:
                     if layout == 2:
                         marked = Text(line_text, style=f"bold {active_accent_hex}")
@@ -4518,9 +4527,13 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             "    \n"
             "└  ┘\n"
         )
+        _hud_w = max(10, panel_width - 10)  # main panel border+padding, hud box edges
+        for t in body_lines:
+            if isinstance(t, Text):
+                t.truncate(_hud_w, overflow="ellipsis")
         body = Align.center(Panel(
             Group(*[Align.center(t) for t in body_lines]),
-            box=_hud_box, border_style=ACCENT, padding=(0, 3), expand=False,
+            box=_hud_box, border_style=ACCENT, padding=(0, 0), expand=False,
         ))
     else:
         body = Group(*[Align.center(t) for t in body_lines])
@@ -4670,7 +4683,9 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             # center on the PANEL, not just on the leftover space between
             # a tall header and a short footer; fall back if it won't fit
             want_above = (usable - body_h) // 2 - header_h
-            if want_above >= 0 and free - want_above >= 0:
+            # bait: center in the visible empty area, not on the whole panel
+            # (the footer eats the bottom rows, so panel-centering looks low)
+            if not bait_sub and want_above >= 0 and free - want_above >= 0:
                 above = want_above
                 below = free - above
             blocks.extend(header_parts)  # empty in zen when cover shown
