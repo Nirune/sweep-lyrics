@@ -1383,6 +1383,28 @@ def fetch_cover(art_url: str):
     return None
 
 
+def _cover_rows():
+    """Rows the square cover needs so its box is square in pixels.
+
+    COVER_ROWS assumes 1:2 cells; real fonts are often 10x22 or 9x20, which
+    leaves a gap under the image. Uses the live pixel size of the tty and
+    falls back to COVER_ROWS when the terminal does not report it."""
+    try:
+        import fcntl
+        import struct
+        import termios
+
+        rows, cols, xpx, ypx = struct.unpack(
+            "HHHH", fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\0" * 8)
+        )
+        if rows and cols and xpx and ypx:
+            cell_w, cell_h = xpx / cols, ypx / rows
+            return max(8, min(20, math.ceil(COVER_COLS * cell_w / cell_h - 0.15)))
+    except Exception:
+        pass
+    return COVER_ROWS
+
+
 def _cover_place_top(term_height=None):
     """Top cell for the cover image.
 
@@ -1391,10 +1413,11 @@ def _cover_place_top(term_height=None):
                     form one visual block instead of a tiny stamp
                     floating in empty space
     """
-    if LAYOUT_MODE == 4 and term_height and term_height > COVER_ROWS + 4:
-        return max(COVER_MARGIN_TOP, term_height - COVER_ROWS - 1)
-    if term_height and term_height > COVER_ROWS + COVER_CAPTION_ROWS + 4:
-        stack = COVER_ROWS + COVER_CAPTION_ROWS
+    rows = _cover_rows()
+    if LAYOUT_MODE == 4 and term_height and term_height > rows + 4:
+        return max(COVER_MARGIN_TOP, term_height - rows - 1)
+    if term_height and term_height > rows + COVER_CAPTION_ROWS + 4:
+        stack = rows + COVER_CAPTION_ROWS
         free = max(0, term_height - stack - 2)
         # bias slightly toward the top (1/3) — dead-center looks floaty
         return max(1, free // 3)
@@ -1425,7 +1448,7 @@ def show_cover(image_path, term_height=None):
                 "--stdin=no",
                 "--transfer-mode=file",
                 "--scale-up",
-                f"--place={COVER_COLS}x{COVER_ROWS}@{COVER_MARGIN_LEFT}x{top}",
+                f"--place={COVER_COLS}x{_cover_rows()}@{COVER_MARGIN_LEFT}x{top}",
                 str(image_path),
             ],
             stdout=sys.stdout,
@@ -4716,6 +4739,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
 
     # ── cover + caption column (aggressive 2-col) ─────────────────────
     caption_width = max(1, COVER_COLS)
+    cover_rows = _cover_rows()
 
     def _truncate(s, max_lines=1):
         s = s or ""
@@ -4725,20 +4749,20 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     if layout == 4:
         # dock: cover is at the bottom of the left column — leave the
         # upper area empty and put a thin caption just above the art.
-        top_pad = max(0, height - COVER_ROWS - 6)
+        top_pad = max(0, height - cover_rows - 6)
         caption_lines = [Text("")] * top_pad
         caption_lines.append(Text(_truncate(title or "unknown", max_lines=2), style=f"bold {ACCENT}"))
         caption_lines.append(Text(_truncate(artist, max_lines=1), style=ARTIST_ACCENT))
         if genre:
             caption_lines.append(Text(_truncate(genre, max_lines=1), style=f"dim {ACCENT_DIM}"))
-        caption_lines.append(Text("─" * min(caption_width, 18), style=f"dim {ACCENT}"))
-        caption_lines.extend([Text("")] * COVER_ROWS)
+        caption_lines.append(Text("─" * caption_width, style=f"dim {ACCENT}"))
+        caption_lines.extend([Text("")] * cover_rows)
     else:
         # classic: keep text stack glued under the art, and match the
         # same top offset Kitty uses so image + caption read as one card
         top = _cover_place_top(height)
-        caption_lines = [Text("")] * (top + COVER_ROWS)
-        caption_lines.append(Text("─" * min(caption_width, 22), style=f"dim {ACCENT}"))
+        caption_lines = [Text("")] * (top + cover_rows)
+        caption_lines.append(Text("─" * caption_width, style=f"dim {ACCENT}"))
         caption_lines.append(Text(_truncate(title or "unknown", max_lines=3), style=f"bold {ACCENT}"))
         caption_lines.append(Text(_truncate(artist, max_lines=2), style=ARTIST_ACCENT))
         if genre:
