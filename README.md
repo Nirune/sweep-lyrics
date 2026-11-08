@@ -63,7 +63,7 @@ Sweep follows any player that exposes MPRIS and shows up in `playerctl`. Tested 
 - mpv (with the `mpv-mpris` plugin)
 - YouTube Music or Spotify in the browser
 
-+Not sure whether yours is detected? Run `playerctl -l`. If it is listed, Sweep can follow it. With several players running, press `p` to switch between them.
+Not sure whether yours is detected? Run `playerctl -l`. If it is listed, Sweep can follow it. With several players running, press `p` to switch between them.
 
 ## ⌨️ Usage
 
