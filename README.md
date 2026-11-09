@@ -7,8 +7,11 @@ Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPR
 ## 🎥 Preview Videos
 
 
+### Per-word mode
+
 https://github.com/user-attachments/assets/b5506b52-c716-494a-8f37-e27400ad5dcf
 
+### Full Lyrics
 
 https://github.com/user-attachments/assets/dbbcba10-8a24-4078-a05a-81fc9f64abf0
 
