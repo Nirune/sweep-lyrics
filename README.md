@@ -10,9 +10,13 @@ Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPR
 https://github.com/user-attachments/assets/b5506b52-c716-494a-8f37-e27400ad5dcf
 
 
+https://github.com/user-attachments/assets/dbbcba10-8a24-4078-a05a-81fc9f64abf0
 
 
-https://github.com/user-attachments/assets/cca95100-258b-43a0-9b3b-12dd0cc0b821
+
+
+
+
 
 
 
