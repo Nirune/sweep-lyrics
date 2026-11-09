@@ -243,6 +243,7 @@ COVER_CACHE_DIR = CACHE_DIR / "covers"
 COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 COVER_COLS = 28        # terminal cells wide (was 24 — felt small/lost)
 COVER_ROWS = 14        # terminal cells tall  (was 12)
+COVER_CORNER_RADIUS = 0.06  # corner rounding as a fraction of the cover's side (0 = sharp)
 COVER_MARGIN_LEFT = 2  # cells from the left edge
 COVER_MARGIN_TOP = 2   # fallback top when height unknown
 COVER_GUTTER = COVER_COLS + COVER_MARGIN_LEFT + 3  # total left offset given
@@ -1252,7 +1253,7 @@ def _pick_cover_url(meta) -> str:
 
 def _cover_cache_path(art_url: str) -> Path:
     key = hashlib.sha1(("v2|" + art_url).encode()).hexdigest()  # v2: bars trimmed
-    return COVER_CACHE_DIR / f"{key}.jpg"
+    return COVER_CACHE_DIR / f"{key}.png"
 
 
 def _trim_black_bars(img):
@@ -1301,6 +1302,28 @@ def _square_crop(path: Path):
     except Exception:
         pass
 
+def _round_corners(path: Path, radius_frac: float = None):
+    if radius_frac is None:
+        radius_frac = COVER_CORNER_RADIUS
+    """Rounds the corners of the image at `path`, in place, as RGBA PNG.
+    Supersampled mask (4x) so the edge is smooth, not jagged. No-op if
+    Pillow is missing or the image can't be read."""
+    if not HAVE_PIL:
+        return
+    try:
+        from PIL import ImageDraw
+        img = Image.open(path).convert("RGBA")
+        w, h = img.size
+        r = max(2, int(min(w, h) * radius_frac))
+        ss = 4
+        mask = Image.new("L", (w * ss, h * ss), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            (0, 0, w * ss - 1, h * ss - 1), radius=r * ss, fill=255)
+        mask = mask.resize((w, h), Image.LANCZOS)
+        img.putalpha(mask)
+        img.save(path, "PNG")
+    except Exception:
+        pass
 
 def extract_cover_accent(path: Path):
     """Pick a karaoke accent that matches the cover's overall mood.
@@ -1411,6 +1434,7 @@ def fetch_cover(art_url: str):
                 return None
             shutil.copy(src, cache_file)
             _square_crop(cache_file)
+            _round_corners(cache_file)
             return cache_file
         if cache_file.exists():
             return cache_file
@@ -1419,6 +1443,7 @@ def fetch_cover(art_url: str):
             if r.ok and r.content:
                 cache_file.write_bytes(r.content)
                 _square_crop(cache_file)
+                _round_corners(cache_file)
                 return cache_file
     except Exception:
         pass
