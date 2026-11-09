@@ -4,6 +4,10 @@ Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPR
 
 ![Sweep Lyrics demo](docs/demo.gif)
 
+## 🎥 Preview Video
+![Sweep Lyrics preview](Perword-demo.mp4)
+
+
 ## ✨ Features
 
 - Word-level karaoke wipe with a soft edge, with per-syllable timing estimated and calibrated per song
