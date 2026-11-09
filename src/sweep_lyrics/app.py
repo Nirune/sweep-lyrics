@@ -1234,6 +1234,22 @@ def youtube_thumbnail_url(track_url: str) -> str:
     return f"https://i.ytimg.com/vi/{m.group(1)}/hqdefault.jpg"
 
 
+# A YouTube video id in track_url beats the browser's artUrl: MediaSession /
+# Plasma Browser Integration art can lag behind the title (a new artwork file
+# holding the previous song's cover), while the id-derived thumbnail always
+# matches the video that is playing. Set False to prefer artUrl again.
+PREFER_YT_THUMBNAIL = True
+
+
+def _pick_cover_url(meta) -> str:
+    """Cover source URL for a metadata dict (see PREFER_YT_THUMBNAIL)."""
+    art = meta.get("art_url", "") or ""
+    thumb = youtube_thumbnail_url(meta.get("track_url", ""))
+    if PREFER_YT_THUMBNAIL:
+        return thumb or art
+    return art or thumb
+
+
 def _cover_cache_path(art_url: str) -> Path:
     key = hashlib.sha1(art_url.encode()).hexdigest()
     return COVER_CACHE_DIR / f"{key}.jpg"
@@ -4923,7 +4939,7 @@ def _load_normal_track(player, cover_path, cover_offset, offset_cache):
         artist, title, cur_meta["album"], duration
     )
 
-    cover_url = cur_meta.get("art_url", "") or youtube_thumbnail_url(cur_meta.get("track_url", ""))
+    cover_url = _pick_cover_url(cur_meta)
     new_cover = fetch_cover(cover_url) if COVER_ENABLED else None
     if new_cover:
         cover_path = new_cover
@@ -5334,7 +5350,7 @@ def main():
                     )
                     song_sec_per_syllable = _calibrate_song_tempo(entries)
 
-                    cover_url = meta.get("art_url", "") or youtube_thumbnail_url(meta.get("track_url", ""))
+                    cover_url = _pick_cover_url(meta)
                     cover_path = fetch_cover(cover_url) if COVER_ENABLED else None
                     last_cover_url = cover_url
                     extract_cover_accent(cover_path)  # mood accent from art
@@ -5668,8 +5684,7 @@ def main():
                             # art_url/track_url are filled in the same way
                             # the initial load fills them — no separate
                             # fallback needed at this check.
-                            new_cover_url = (cur_meta.get("art_url", "")
-                                              or youtube_thumbnail_url(cur_meta.get("track_url", "")))
+                            new_cover_url = _pick_cover_url(cur_meta)
                             if new_cover_url != last_cover_url:
                                 last_cover_url = new_cover_url
                                 new_cover = fetch_cover(new_cover_url) if COVER_ENABLED else None
