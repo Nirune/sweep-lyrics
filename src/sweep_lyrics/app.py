@@ -1251,8 +1251,34 @@ def _pick_cover_url(meta) -> str:
 
 
 def _cover_cache_path(art_url: str) -> Path:
-    key = hashlib.sha1(art_url.encode()).hexdigest()
+    key = hashlib.sha1(("v2|" + art_url).encode()).hexdigest()  # v2: bars trimmed
     return COVER_CACHE_DIR / f"{key}.jpg"
+
+
+def _trim_black_bars(img):
+    """Crops symmetric black letterbox bars off the top and bottom of `img`.
+
+    YouTube hqdefault thumbnails are 4:3 frames holding a 16:9 picture, so
+    ~12.5% pure-black bars frame the real artwork. A crop only happens when
+    both bars are >= 3% of the height and of similar size, so a dark photo
+    or a one-sided dark edge is left alone. Returns the image unchanged
+    when nothing qualifies."""
+    try:
+        w, h = img.size
+        box = img.convert("L").point(lambda p: 255 if p > 24 else 0).getbbox()
+        if not box:
+            return img
+        top, bottom = box[1], box[3]
+        a, b = top, h - bottom
+        if min(a, b) < 0.03 * h or min(a, b) < 0.6 * max(a, b):
+            return img
+        inset = max(1, round(h * 0.006))  # JPEG ringing at the bar edge
+        top, bottom = top + inset, bottom - inset
+        if bottom - top < 0.4 * h:
+            return img
+        return img.crop((0, top, w, bottom))
+    except Exception:
+        return img
 
 
 def _square_crop(path: Path):
@@ -1266,7 +1292,7 @@ def _square_crop(path: Path):
     if not HAVE_PIL:
         return
     try:
-        img = Image.open(path).convert("RGB")
+        img = _trim_black_bars(Image.open(path).convert("RGB"))
         w, h = img.size
         side = min(w, h)
         left = (w - side) // 2
