@@ -359,6 +359,15 @@ def find_active_player(preferred=None):
 
     players = [p.strip() for p in listed.splitlines() if p.strip()]
 
+    # --- manual pin (set from the `p` player menu) wins over auto-pick as
+    # long as that player still exists; if it went away, drop back to auto.
+    _pin = find_active_player._pinned
+    if _pin:
+        if _pin in players:
+            _pst = playerctl("status", player=_pin)
+            return _pin, ("Playing" if _pst == "Playing" else "Paused")
+        find_active_player._pinned = None
+
     playing = []
     paused = []
     stopped = []
@@ -434,6 +443,9 @@ def find_active_player(preferred=None):
 # to detect a locked player whose position has stopped advancing despite
 # reporting "Playing" — see the staleness check above.
 find_active_player._stale = {}
+
+# Player id pinned from the `p` menu (None = automatic selection).
+find_active_player._pinned = None
 
 # How long to keep treating a preferred player as merely "Paused" after
 # it reports "Stopped" before believing the Stopped status for real. Long
@@ -1825,6 +1837,145 @@ def show_shazam_history(live):
     live.start()
 
 
+def _player_menu_rows():
+    """Snapshot of MPRIS players for the picker, one row per tab/app.
+
+    Merges the Brave + plasma-browser-integration duplicates of the same
+    tab (same URL), hides Brave's idle placeholder (no artist, no URL) when
+    real rows exist, and lists Playing before Paused.
+    """
+    from urllib.parse import urlparse
+
+    listed = playerctl("-l") or ""
+    ids = [x.strip() for x in listed.splitlines() if x.strip()]
+    fmt = "{{status}}|||{{xesam:title}}|||{{xesam:artist}}|||{{xesam:url}}"
+
+    groups = {}
+    for pid in ids:
+        raw = playerctl("metadata", "--format", fmt, player=pid)
+        if raw is None:
+            status = playerctl("status", player=pid) or "Stopped"
+            title = artist = url = ""
+        else:
+            parts = raw.split("|||")
+            while len(parts) < 4:
+                parts.append("")
+            status, title, artist, url = [x.strip() for x in parts[:4]]
+        key = url or (f"{title}|{artist}" if artist else f"id:{pid}")
+        g = groups.get(key)
+        if g is None:
+            groups[key] = {"ids": [pid], "pid": pid, "status": status,
+                           "title": title, "artist": artist, "url": url}
+            continue
+        g["ids"].append(pid)
+        if status == "Playing":
+            g["status"] = "Playing"
+        if artist and not g["artist"]:
+            # prefer the member that actually carries full metadata
+            g["pid"], g["title"], g["artist"] = pid, title, artist
+        if url and not g["url"]:
+            g["url"] = url
+
+    rows = list(groups.values())
+    real = [r for r in rows if r["artist"] or r["url"]]
+    if real:
+        rows = real  # drop idle placeholders
+
+    for r in rows:
+        domain = ""
+        if r["url"]:
+            try:
+                domain = urlparse(r["url"]).netloc.lower()
+            except Exception:
+                domain = ""
+            if domain.startswith("www."):
+                domain = domain[4:]
+        is_browser = any(i.startswith("plasma-browser-integration") for i in r["ids"])
+        r["label"] = domain if (is_browser and domain) else _player_short_name(r["pid"])
+
+    rows.sort(key=lambda r: 0 if r["status"] == "Playing" else 1)
+    return rows
+
+
+def show_player_menu(live, current=None, pinned=None):
+    """Pauses Live and shows a centered player picker, same visual language
+    as show_help. Returns ("pin", player_id), ("auto", None) or None."""
+    rows = _player_menu_rows()
+    live.stop()
+    console = Console()
+    n = len(rows) + 1  # row 0 = "auto"
+    sel = 0
+    for i, r in enumerate(rows):
+        if current and current in r["ids"]:
+            sel = i + 1
+            break
+    choice = None
+
+    def _line(is_sel, is_cur, icon, label, text, sub):
+        t = Text(no_wrap=True, overflow="ellipsis")
+        t.append("\u276f " if is_sel else "  ", style=f"bold {ACCENT}")
+        t.append("\u25cf " if is_cur else "  ", style=ACCENT)
+        t.append(f"{icon} ")
+        t.append(f"{label[:18]:<18} ", style=(f"bold {ACCENT}" if is_sel else None))
+        t.append(text, style=("bold" if is_sel else None))
+        if sub:
+            t.append(f"  {sub}", style="dim italic")
+        return t
+
+    try:
+        while True:
+            console.clear()
+            lines = [_line(sel == 0, False, "\u21bb", "auto",
+                           "follow whichever is playing",
+                           "on" if not pinned else "")]
+            for i, r in enumerate(rows):
+                icon = "\u25b6" if r["status"] == "Playing" else "\u23f8"
+                text = r["title"] or "(no title)"
+                if r["artist"]:
+                    text += f" \u2014 {r['artist']}"
+                is_cur = bool(current and current in r["ids"])
+                sub = "pinned" if (pinned and pinned in r["ids"]) else ""
+                lines.append(_line(sel == i + 1, is_cur, icon, r["label"], text, sub))
+            if not rows:
+                lines.append(Text("  no MPRIS players found", style="dim italic"))
+
+            panel = Panel(
+                Group(
+                    *lines,
+                    Text(""),
+                    Text("\u2191\u2193 / j k move \u00b7 enter select \u00b7 a auto \u00b7 esc close",
+                         style="dim italic", justify="center"),
+                ),
+                border_style=ACCENT,
+                padding=(1, 2),
+                width=84,
+                title=" players ",
+                title_align="left",
+            )
+            console.print(Align.center(panel, vertical="middle",
+                                       height=max(console.height - 1, 1)))
+
+            ch = poll_key(60)
+            if ch is None or ch in ("esc", "q", "Q"):
+                break
+            if ch in ("up", "k", "K"):
+                sel = (sel - 1) % n
+            elif ch in ("down", "j", "J", "p", "P"):
+                sel = (sel + 1) % n
+            elif ch in ("a", "A"):
+                choice = ("auto", None)
+                break
+            elif ch == "enter":
+                if sel == 0:
+                    choice = ("auto", None)
+                else:
+                    choice = ("pin", rows[sel - 1]["pid"])
+                break
+    finally:
+        live.start()
+    return choice
+
+
 def show_help(live, songrec_available=False):
     """Pauses Live and shows every key binding in a centered panel, same
     visual language as the history panel. Any key (or a long timeout)
@@ -1854,7 +2005,7 @@ def show_help(live, songrec_available=False):
         ("z", "minimal mode"),
         ("m", "search lyrics"),
         ("f", "alternate LRC"),
-        ("p", "next player"),
+        ("p", "pick player"),
         ("o", "settings"),
         ("? or /", "this help"),
         ("q", "quit"),
@@ -5962,38 +6113,26 @@ def main():
                         if cur_player:
                             playerctl("play-pause", player=cur_player)
                     elif ch in ("p", "P"):
-                        # Cycle MPRIS player — only when >1 exist. Prefer
-                        # Playing players in the rotation so we don't land
-                        # on a dead/paused tab and show garbage metadata
-                        # like title="YouTube".
-                        listed = playerctl("-l") or ""
-                        all_p = [x.strip() for x in listed.splitlines() if x.strip()]
-                        if len(all_p) <= 1:
-                            # nothing to cycle — stay put, no reload glitch
-                            pass
-                        else:
-                            playing_p = []
-                            other_p = []
-                            for p in all_p:
-                                st = playerctl("status", player=p)
-                                if st == "Playing":
-                                    playing_p.append(p)
-                                else:
-                                    other_p.append(p)
-                            # rotate within Playing first; if only one
-                            # Playing, include paused so user can still switch
-                            pool = playing_p if len(playing_p) > 1 else (playing_p + other_p)
-                            if not pool:
-                                pool = all_p
-                            try:
-                                i = pool.index(cur_player) if cur_player in pool else -1
-                            except ValueError:
-                                i = -1
-                            nxt = pool[(i + 1) % len(pool)]
-                            if nxt != cur_player:
-                                locked_player = nxt
-                                last_key = None
-                                break
+                        # Player picker popup (show_player_menu). A pick is
+                        # PINNED so auto-selection can't steal the view back;
+                        # "auto" clears the pin.
+                        _pm_choice = show_player_menu(live, cur_player, find_active_player._pinned)
+                        last_frame_time = time.time()
+                        if _pm_choice:
+                            _pm_kind, _pm_pid = _pm_choice
+                            if _pm_kind == "auto":
+                                find_active_player._pinned = None
+                                _pm_best, _pm_st = find_active_player(None)
+                                if _pm_best and _pm_best != cur_player:
+                                    locked_player = _pm_best
+                                    last_key = None
+                                    break
+                            else:
+                                find_active_player._pinned = _pm_pid
+                                if _pm_pid != cur_player:
+                                    locked_player = _pm_pid
+                                    last_key = None
+                                    break
                     elif ch in ("k", "K"):
                         karaoke_enabled = not karaoke_enabled
                     elif ch in ("d", "D"):
