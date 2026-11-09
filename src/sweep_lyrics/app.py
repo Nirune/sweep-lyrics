@@ -341,6 +341,36 @@ def _pick_most_active(playing: list[str]) -> str:
     return playing[0]
 
 
+# ---------------------------------------------------- auto-mode noise filter
+# Browser tabs bridged by plasma-browser-integration expose a media session
+# for ANY page with a <video>/<audio> (e.g. the claude.ai login background),
+# with no artist. In auto mode those must not outrank or steal the view from
+# a real player. Set to False to disable.
+AUTO_IGNORE_ARTISTLESS_BROWSER = True
+
+_ARTIST_CACHE = {"t": 0.0, "map": {}}
+
+
+def _player_artists():
+    """{player_id: artist} for every MPRIS player in ONE playerctl call,
+    cached ~1.5s. Returns None when it cannot be read (callers fail open)."""
+    now = time.time()
+    if now - _ARTIST_CACHE["t"] < 1.5:
+        return _ARTIST_CACHE["map"]
+    raw = playerctl("-a", "metadata", "--format",
+                    "{{playerInstance}}|||{{xesam:artist}}")
+    if raw is None:
+        return None
+    m = {}
+    for line in raw.splitlines():
+        pid, sep, artist = line.partition("|||")
+        if sep:
+            m[pid.strip()] = artist.strip()
+    _ARTIST_CACHE["t"] = now
+    _ARTIST_CACHE["map"] = m
+    return m
+
+
 def find_active_player(preferred=None):
     """Pick the MPRIS player that is actually making sound.
 
@@ -379,6 +409,23 @@ def find_active_player(preferred=None):
             paused.append(p)
         elif status == "Stopped":
             stopped.append(p)
+
+    # --- auto mode: ignore artist-less browser media sessions (claude.ai
+    # login page, etc.) while a real player is Playing/Paused. Without this
+    # they steal the view when the real player pauses, and the sticky lock
+    # keeps them selected after it resumes.
+    if AUTO_IGNORE_ARTISTLESS_BROWSER:
+        _art = _player_artists()
+        if _art:
+            _noise = {p for p in players
+                      if p.startswith("plasma-browser-integration")
+                      and p in _art and not _art[p]}
+            if _noise and any(p not in _noise for p in playing + paused):
+                playing = [p for p in playing if p not in _noise]
+                paused = [p for p in paused if p not in _noise]
+                stopped = [p for p in stopped if p not in _noise]
+                if preferred in _noise:
+                    preferred = None
 
     # --- preferred just blipped "Stopped" instead of actually going away.
     # Brave/Chromium-based MPRIS players report "Stopped" transiently
@@ -435,7 +482,10 @@ def find_active_player(preferred=None):
         find_active_player._stale.pop(preferred, None)
         return preferred, "Paused"
     if paused:
-        return paused[0], "Paused"
+        # prefer players that carry an artist over idle placeholders
+        _art = _player_artists() or {}
+        _with_artist = [p for p in paused if _art.get(p)]
+        return (_with_artist or paused)[0], "Paused"
     return None, None
 
 
