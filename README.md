@@ -12,6 +12,15 @@ https://github.com/user-attachments/assets/b5506b52-c716-494a-8f37-e27400ad5dcf
 
 
 
+https://github.com/user-attachments/assets/cca95100-258b-43a0-9b3b-12dd0cc0b821
+
+
+
+
+
+
+
+
 ## ✨ Features
 
 - Word-level karaoke wipe with a soft edge, with per-syllable timing estimated and calibrated per song
