@@ -4,7 +4,7 @@ Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPR
 
 ![Sweep Lyrics demo](docs/demo.gif)
 
-## 🎥 Preview Video
+## 🎥 Preview Videos
 
 
 https://github.com/user-attachments/assets/b5506b52-c716-494a-8f37-e27400ad5dcf
