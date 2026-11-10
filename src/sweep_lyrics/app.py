@@ -84,6 +84,8 @@ POS_POLL_INTERVAL = 0.2  # how often to actually spawn playerctl for position/st
                          # frames in between use SmoothClock interpolation
 CONTEXT_LINES = 3
 MAX_CONTEXT_LINES = 9
+SEEK_BIG = 5.0    # seconds, "," / "." keys
+SEEK_SMALL = 1.0  # seconds, "<" / ">" keys (shift)
 
 # ── visual language ─────────────────────────────────────────────────────
 # Cool cyan primary. Terminal-native, distinct from the old magenta pair.
@@ -575,6 +577,14 @@ def get_position(player):
         return float(pos)
     except (TypeError, ValueError):
         return 0.0
+
+
+def seek_relative(player, seconds):
+    """Seek the MPRIS player by `seconds` (negative = back) via playerctl."""
+    if not player or not seconds:
+        return
+    playerctl("position", f"{abs(seconds):g}{'+' if seconds > 0 else '-'}",
+              player=player)
 
 
 class SmoothClock:
@@ -2110,6 +2120,8 @@ def show_help(live, songrec_available=False):
         ("+ / -", "zoom (kitty allow_remote_control)"),
         ("k", "karaoke wipe on / off"),
         ("d", "karaoke debug overlay"),
+        (", / .", "seek -5s / +5s"),
+        ("< / >", "seek -1s / +1s"),
         ("[ / ]", "shift sync earlier / later"),
         ("r", "reset sync offset"),
         ("t", "translation on / off"),
@@ -6593,6 +6605,15 @@ def main():
                         if cover_path and COVER_ENABLED:
                             show_cover(cover_path, term_height=console.size.height)
                         last_frame_time = time.time()
+                    elif ch in (",", ".", "<", ">") and cur_player and not shazam_active:
+                        # Seek: , . = 5s back/forward; < > (shift) = 1s.
+                        seek_relative(cur_player,
+                                      {",": -SEEK_BIG, ".": SEEK_BIG,
+                                       "<": -SEEK_SMALL, ">": SEEK_SMALL}[ch])
+                        # Drop the interpolated clock so the next poll
+                        # hard-snaps to the new position (no wipe lag).
+                        pos_clock.reset()
+                        last_pos_poll = 0.0
                     elif ch == "[":
                         # Lyrics running ahead of the vocal — pull sync
                         # earlier by lowering the offset. Persisted per
