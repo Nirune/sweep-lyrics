@@ -1024,6 +1024,70 @@ def parse_enhanced_lrc(text: str):
     return list(line_entries), list(word_timings)
 
 
+# ------------------------------------------------ live word-sync upgrade
+# lyrics_providers.fetch() returns the first good result; a word-level
+# result that lands later used to be cached only. These helpers hand it to
+# the main loop (worker thread -> mailbox -> loop swaps it in).
+import threading as _threading
+
+_UPGRADE_LOCK = _threading.Lock()
+_UPGRADE_PENDING = None  # dict set by the worker, consumed by the main loop
+_LOAD_GEN = 0            # bumped on every load_lyrics_with_words() call
+
+
+def _upg_log(msg):
+    try:
+        if HAVE_PROVIDERS:
+            lyrics_providers.log("app: live upgrade " + msg)
+    except Exception:
+        pass
+
+
+def _queue_live_upgrade(gen, artist, title, res):
+    """Runs on the provider's background thread. Parse only, no UI state."""
+    global _UPGRADE_PENDING
+    if not res or not res.word_level:
+        return
+    try:
+        up_entries, up_wt = parse_enhanced_lrc(res.lrc)
+    except Exception as e:
+        _upg_log(f"dropped, parse failed: {type(e).__name__}: {e}")
+        return
+    if not up_entries or not any(up_wt):
+        _upg_log("dropped, no word timings after parse")
+        return
+    with _UPGRADE_LOCK:
+        if gen != _LOAD_GEN:
+            _upg_log(f"dropped, stale load (gen {gen} != {_LOAD_GEN}) {artist} / {title}")
+            return
+        _UPGRADE_PENDING = {
+            "gen": gen, "artist": artist or "", "title": title or "",
+            "entries": up_entries, "word_timings": up_wt, "source": res.source,
+        }
+
+
+def _take_live_upgrade(artist, title, cur_word_timings):
+    """Main loop, once per frame. Returns the pending upgrade or None."""
+    global _UPGRADE_PENDING
+    if _UPGRADE_PENDING is None:  # cheap unlocked check, most frames exit here
+        return None
+    with _UPGRADE_LOCK:
+        up, _UPGRADE_PENDING = _UPGRADE_PENDING, None
+        if up is None:
+            return None
+        if up["gen"] != _LOAD_GEN:
+            _upg_log("dropped, a newer lyrics load happened")
+            return None
+    if (up["artist"].casefold().strip() != (artist or "").casefold().strip()
+            or up["title"].casefold().strip() != (title or "").casefold().strip()):
+        _upg_log(f"dropped, song changed ({up['artist']} / {up['title']} -> {artist} / {title})")
+        return None
+    if cur_word_timings and any(cur_word_timings):
+        _upg_log("dropped, screen already has word timings")
+        return None
+    return up
+
+
 def load_lyrics_with_words(artist, title, album, duration):
     """Unified loader: try Enhanced (word-level) first, fall back to
     normal lrclib line-synced + plain.
@@ -1031,9 +1095,16 @@ def load_lyrics_with_words(artist, title, album, duration):
     Returns (entries, plain_lyrics, lrc_duration, word_timings).
     word_timings is a parallel list to entries (or None when unavailable).
     """
+    global _LOAD_GEN
     enhanced = ""
     if HAVE_PROVIDERS:  # multi-provider word-level lyrics first
-        res = lyrics_providers.fetch(title, artist, album, duration)
+        with _UPGRADE_LOCK:
+            _LOAD_GEN += 1
+            _gen = _LOAD_GEN
+        res = lyrics_providers.fetch(
+            title, artist, album, duration,
+            on_upgrade=lambda r, g=_gen, a=artist, t=title: _queue_live_upgrade(g, a, t, r),
+        )
         if res and res.word_level:
             enhanced = res.lrc
     if enhanced:
@@ -1287,7 +1358,7 @@ def youtube_thumbnail_url(track_url: str) -> str:
     """Derives a public thumbnail URL from a YouTube watch/shorts/youtu.be
     URL. Returns '' if track_url isn't a recognizable YouTube link.
     Used as a fallback when mpris:artUrl is empty — Chrome's MediaSession
-    integration doesn't always expose artwork for a plain YouTube tab,
+    integration doesn't always expose cover art for a plain YouTube tab,
     even though the video itself has a perfectly good public thumbnail."""
     if not track_url:
         return ""
@@ -1298,7 +1369,7 @@ def youtube_thumbnail_url(track_url: str) -> str:
 
 
 # A YouTube video id in track_url beats the browser's artUrl: MediaSession /
-# Plasma Browser Integration art can lag behind the title (a new artwork file
+# Plasma Browser Integration art can lag behind the title (a new cover-art file
 # holding the previous song's cover), while the id-derived thumbnail always
 # matches the video that is playing. Set False to prefer artUrl again.
 PREFER_YT_THUMBNAIL = True
@@ -1322,7 +1393,7 @@ def _trim_black_bars(img):
     """Crops symmetric black letterbox bars off the top and bottom of `img`.
 
     YouTube hqdefault thumbnails are 4:3 frames holding a 16:9 picture, so
-    ~12.5% pure-black bars frame the real artwork. A crop only happens when
+    ~12.5% pure-black bars frame the real cover art. A crop only happens when
     both bars are >= 3% of the height and of similar size, so a dark photo
     or a one-sided dark edge is left alone. Returns the image unchanged
     when nothing qualifies."""
@@ -1349,7 +1420,7 @@ def _square_crop(path: Path):
     covers always fill the cell box edge-to-edge regardless of the
     source's aspect ratio. Without this, 16:9 YouTube thumbnails get
     letterboxed (shrunk + padded) by icat's --place fit-to-box scaling,
-    while SongRec's near-square album art fills it fully — same box,
+    while SongRec's near-square cover art fills it fully — same box,
     visibly different sizes. No-op if Pillow isn't installed or the
     image can't be read; callers just get the uncropped original then."""
     if not HAVE_PIL:
@@ -1477,7 +1548,7 @@ def fetch_cover(art_url: str):
     back to the no-cover layout in that case, never raise.
 
     NOTE on file:// sources: some MPRIS senders (e.g. KDE Plasma Browser
-    Integration) reuse a single temp file path for every track's artwork,
+    Integration) reuse a single temp file path for every track's cover art,
     overwriting its *contents* each time the track changes while the
     *path* stays identical. A URL-keyed cache can't tell that apart from
     "already fetched this exact art" and would keep serving stale bytes
@@ -2207,7 +2278,7 @@ _SETTINGS_CATEGORIES = [
     ]),
     ("display", "Display", [
         ("context_lines",        "Context lines (min)",      "int",   3,    1,     9,    1),
-        ("show_cover",           "Show artwork",             "bool",  True,  None, None, None),
+        ("show_cover",           "Show cover art",           "bool",  True,  None, None, None),
         ("cover_accent",         "Accent from cover art",    "bool",  False, None, None, None),
     ]),
 ]
@@ -5743,6 +5814,15 @@ def main():
                 while True:
                     now = time.time()
                     dt = now - last_frame_time
+                    # live upgrade: a word-level result landed after the race
+                    _up = _take_live_upgrade(artist, title, word_timings)
+                    if _up:
+                        entries = _up["entries"]
+                        word_timings = _up["word_timings"]
+                        song_sec_per_syllable = _calibrate_song_tempo(entries)
+                        translations = None
+                        romanized = None
+                        _upg_log(f"applied: {_up['source']} word-level, {len(entries)} lines ({artist} / {title})")
                     last_frame_time = now
 
                     if now - last_full_check >= FULL_CHECK_INTERVAL:
@@ -6385,7 +6465,7 @@ def main():
                         # re-place the cover art if we had one showing
                         # (dock layout puts it at the bottom)
                         if not COVER_ENABLED:
-                            # artwork switched off in settings
+                            # cover art switched off in settings
                             cover_path = None
                             cover_offset = 0
                         else:

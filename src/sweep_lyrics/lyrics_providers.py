@@ -991,7 +991,8 @@ def _beats(i: int, j: int | None, hits: dict[int, Parsed]) -> bool:
     return (-RANK[hits[i].level()], i) < (-RANK[hits[j].level()], j)
 
 
-def _late_finish(req: Req, provs: list[Provider], hits, outcomes, out, t_end: float, winner, use_cache: bool) -> None:
+def _late_finish(req: Req, provs: list[Provider], hits, outcomes, out, t_end: float, winner, use_cache: bool,
+                 on_upgrade: Callable[[Result], None] | None = None) -> None:
     """Keep listening after the race returned; upgrade the cache if a better result lands."""
     current = winner
     while len(outcomes) < len(provs) and time.monotonic() < t_end:
@@ -1013,6 +1014,12 @@ def _late_finish(req: Req, provs: list[Provider], hits, outcomes, out, t_end: fl
             log(f"late winner: {res.source} {res.level}, cached for next play ({req.title} / {req.artist})")
             if use_cache:
                 cache_put(req, res)
+            if on_upgrade is not None:
+                try:
+                    on_upgrade(res)
+                    log(f"late winner: on_upgrade delivered ({res.source} {res.level})")
+                except Exception as e:  # a broken UI callback must never kill the listener
+                    log(f"late winner: on_upgrade failed: {type(e).__name__}: {e}")
 
 
 def _describe(kind: str, payload, dt: float) -> str:
@@ -1024,7 +1031,8 @@ def _describe(kind: str, payload, dt: float) -> str:
 
 
 def fetch(title, artist, album=None, duration=None, video_id=None, *, use_cache: bool = True,
-          overall_timeout: float = OVERALL_TIMEOUT) -> Result | None:
+          overall_timeout: float = OVERALL_TIMEOUT,
+          on_upgrade: Callable[[Result], None] | None = None) -> Result | None:
     req = Req.make(title, artist, album, duration, video_id)
     if not req.title:
         return None
@@ -1042,7 +1050,7 @@ def fetch(title, artist, album=None, duration=None, video_id=None, *, use_cache:
         else:
             log(f"{p.id}: still out, letting it finish in the background ({req.title} / {req.artist})")
     if len(outcomes) < len(provs):
-        threading.Thread(target=_late_finish, args=(req, provs, hits, outcomes, out, t_end, winner, use_cache),
+        threading.Thread(target=_late_finish, args=(req, provs, hits, outcomes, out, t_end, winner, use_cache, on_upgrade),
                          daemon=True).start()
     if winner is None:
         has_err = any(o[0] == "err" for o in outcomes.values()) or len(outcomes) < len(provs)
