@@ -4467,18 +4467,73 @@ def _line_sung_end(entries, word_timings, k, duration, sps):
     return start + span
 
 
+def _render_apple_dots(gap_info, accent_hex, center_cols=None):
+    """Apple Music style 3-dot countdown for instrumental gaps.
+
+    center_cols: if set, the dots row is padded with leading spaces so its
+    visual centre lines up with a kitty image that is `center_cols` wide,
+    drawn left-aligned starting at column 0.
+    """
+    rem = gap_info.get("rem", 0.0)
+    is_outro = gap_info.get("is_outro", False)
+
+    dot_char = "●"
+    sep = "  "
+
+    # Build the dots content first so we know its width.
+    if is_outro:
+        active_count = 3 if rem > 6.0 else (2 if rem > 3.0 else 1)
+    elif rem > 3.0:
+        active_count = 0
+    elif rem > 2.0:
+        active_count = 1
+    elif rem > 1.0:
+        active_count = 2
+    else:
+        active_count = 3
+
+    parts = []
+    for i in range(3):
+        if is_outro:
+            style = f"dim {accent_hex}" if i < active_count else "dim white"
+        elif active_count == 0:
+            style = "dim white"
+        elif i < active_count:
+            style = f"bold {accent_hex}"
+        else:
+            style = "dim white"
+        parts.append((dot_char, style))
+
+    dot_content_width = 3 + 2 * len(sep)  # 3 dots + 2 separators of len(sep)
+
+    t = Text(justify="center")
+    # If the caller tells us where the image is centred, nudge the dots to match.
+    if center_cols is not None and center_cols > dot_content_width:
+        pad = " " * ((center_cols - dot_content_width) // 2)
+        t.append(pad)
+
+    for i, (ch, style) in enumerate(parts):
+        if i > 0:
+            t.append(sep)
+        t.append(ch, style=style)
+
+    return t
+
+
 def _instrumental_gap(entries, word_timings, idx, sync_pos, duration, sps):
-    """True while the song is in a long instrumental stretch: intro, a
-    break between lyrics, or the outro. See INSTRUMENTAL_* constants."""
+    """Returns gap_info dict if song is in a long instrumental stretch, else None."""
     n = len(entries)
     if n == 0:
-        return False
+        return None
 
     def blank(k):
         return not (entries[k][1] or "").strip()
 
+    is_intro = False
+    is_outro = False
     if idx < 0:  # before the first row: the intro
         gap_start, j = 0.0, 0
+        is_intro = True
     else:
         k = idx
         if blank(k):  # blank rows mark silence; measure from the line before them
@@ -4489,7 +4544,7 @@ def _instrumental_gap(entries, word_timings, idx, sync_pos, duration, sps):
         else:
             gap_start = _line_sung_end(entries, word_timings, idx, duration, sps)
         if sync_pos < gap_start + INSTRUMENTAL_LINGER:
-            return False
+            return None
         j = idx + 1
     while j < n and blank(j):
         j += 1
@@ -4497,28 +4552,35 @@ def _instrumental_gap(entries, word_timings, idx, sync_pos, duration, sps):
         gap_end = entries[j][0]
     elif duration and duration > gap_start:
         gap_end = duration  # outro: silence until the song ends
+        is_outro = True
     else:
-        return False
-    return gap_end - gap_start >= INSTRUMENTAL_MIN_GAP
+        return None
+    if gap_end - gap_start < INSTRUMENTAL_MIN_GAP:
+        return None
+    rem = max(0.0, gap_end - sync_pos)
+    return {
+        "start": gap_start,
+        "end": gap_end,
+        "rem": rem,
+        "is_intro": is_intro,
+        "is_outro": is_outro,
+        "pos": sync_pos,
+    }
 
 
-def _instrumental_rows(accent_hex, panel_width, available):
-    """Lines for the instrumental icon. Per-word mode: the glyph goes through
-    the same renderer as a lyric word (size = WORD_SIZE, look = WORD_STYLE),
-    always in the near-white 'not sung yet' colour. Other modes: one small
-    bold white line."""
+def _instrumental_rows(accent_hex, panel_width, available, gap_info=None):
+    """Lines for the instrumental icon and Apple Music dots countdown."""
     plain = Text(INSTRUMENTAL_ICON, style="bold white", justify="center")
     if not WORD_MODE:
-        return [plain]
+        dots_line = _render_apple_dots(gap_info, accent_hex) if gap_info else None
+        return [plain, dots_line] if dots_line else [plain]
     try:
         w = INSTRUMENTAL_WORD_GLYPH
-        grad, wp = 3, 0.0  # wipe at 0% = the near-white rest colour
-        ga = _hex_to_rgb(accent_hex)
-        gb = _grad_end(ga)
         eff_style = _effective_word_style(WORD_STYLE)
         sz_idx = max(0, min(2, WORD_SIZE))
         max_cw, max_ch = max(10, panel_width - 8), max(3, available - 2)
         rows = None
+        img_cols = None  # actual rendered width in terminal columns (image mode)
         if eff_style in (0, 1, 3, 6):
             letters = []
             big = _big_word_rows(
@@ -4526,17 +4588,39 @@ def _instrumental_rows(accent_hex, panel_width, available):
                 max_s=_WORD_SIZE_DOTS[eff_style][sz_idx],
                 style=eff_style, letters_out=letters)
             if big:
-                rows = _color_rows(big, letters, grad, wp, ga, gb)
+                rows = _color_rows(big, letters, 0, 0.0, _WIPE_REST, _WIPE_REST)
+                img_cols = len(big[0]) if big else None
         elif eff_style == 4:
-            rows = _osc66_word_rows(w, max_cw, max_ch, sz_idx, ga, grad, wp, gb)
+            rows = _osc66_word_rows(w, max_cw, max_ch, sz_idx, _WIPE_REST, 0, 0.0)
         elif eff_style == 5:
-            base = _boost_accent_rgb(_get_accent_rgb(), intensity=0.0)
-            rows = _word_image_rows(w, base, max_cw, max_ch, sz_idx, grad, wp, _grad_end(base))
+            # Mode 0 (flat rest colour) avoids the karaoke wipe / feathering
+            # mask which bleeds the theme accent colour onto the left edge.
+            rows = _word_image_rows(w, _IMG_REST, max_cw, max_ch, sz_idx, mode=0, p=0.0)
+            if rows:
+                # Each placeholder char is 1 column wide; cols = len of one row's string / 3
+                # (each placeholder = chr(0x10EEEE) + 2 diacritics = 3 codepoints but
+                #  the displayed width is `cols` terminal columns as returned by _render_word_png)
+                # We can read it from the cache entry instead.
+                cw, ch = _term_cell_px()
+                rows_target = _WORD_SIZE_DOTS[5][sz_idx]
+                cols_max = min(max_cw, len(_PH_DIAC))
+                rows_cap = max(2, min(max_h if (max_h := max_ch) else max_ch, len(_PH_DIAC)))
+                rgb_key = tuple((c >> 3) << 3 for c in _IMG_REST)
+                key = (w.upper(), rgb_key, rows_target, cols_max, rows_cap, cw, ch, 0, 0, rgb_key)
+                ent = _WORD_IMG_CACHE.get(key)
+                img_cols = ent["cols"] if ent else None
         if not rows:
-            return [plain]
-        return [Text(""), *rows, Text("")]
+            dots_line = _render_apple_dots(gap_info, accent_hex) if gap_info else None
+            return [plain, dots_line] if dots_line else [plain]
+        dots_line = _render_apple_dots(gap_info, accent_hex, center_cols=img_cols) if gap_info else None
+        res = [Text(""), *rows]
+        if dots_line:
+            res.append(dots_line)
+        res.append(Text(""))
+        return res
     except Exception:
-        return [plain]
+        dots_line = _render_apple_dots(gap_info, accent_hex) if gap_info else None
+        return [plain, dots_line] if dots_line else [plain]
 
 
 def _instrumental_text(accent_hex):
@@ -4864,7 +4948,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
 
         if in_gap and idx < 0:
             body_lines.append(Text(""))
-            body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available))
+            body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap))
             body_lines.append(Text(""))
 
         for i in range(start, end + 1):
@@ -4875,14 +4959,14 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             # stray underline/bar artifacts under the real lyric
             if not (line_text or "").strip():
                 if in_gap and i == idx:
-                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available))
+                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap))
                 continue
             line_text = line_text or " "
             if i == idx:
                 if i > start and layout != 3:
                     body_lines.append(Text(""))
                 if in_gap:
-                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available))
+                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap))
                 elif WORD_MODE:
                     cw = _current_word(
                         line_text, frac, active_word_timings, sync_pos,
