@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/dbbcba10-8a24-4078-a05a-81fc9f64abf0
 
 ## 📦 Install
 
-One command. It installs the system dependencies for Arch, Debian/Ubuntu and Fedora families, then installs Sweep with pipx:
+One command. It installs the system dependencies for Arch, Debian/Ubuntu and Fedora families, then installs Sweep Lyrics with pipx:
 
     curl -fsSL https://raw.githubusercontent.com/Nirune/sweep-lyrics/main/install.sh | bash
 
@@ -48,7 +48,7 @@ Open a new shell afterwards so `~/.local/bin` is on your `PATH`.
 
 ### 🛠️ Manual install
 
-Install the required packages for your distro, then Sweep itself:
+Install the required packages for your distro, then Sweep Lyrics itself:
 
     # Arch based
     sudo pacman -S python-pipx kitty playerctl
@@ -80,14 +80,14 @@ Optional (detected at runtime):
 - `niri` or `xdotool`: focused-window lookup on niri / X11, used to pick the matching player (falls back to the first playing one)
 
 ## 🎵 Supported players
-Sweep follows any player that exposes MPRIS and shows up in `playerctl`. Tested with:
+Sweep Lyrics follows any player that exposes MPRIS and shows up in `playerctl`. Tested with:
 
 - Spotify
 - YouTube Music
 - mpv (with the `mpv-mpris` plugin)
 - YouTube Music or Spotify in the browser
 
-Not sure whether yours is detected? Run `playerctl -l`. If it is listed, Sweep can follow it. With several players running, press `p` to switch between them.
+Not sure whether yours is detected? Run `playerctl -l`. If it is listed, Sweep Lyrics can follow it. With several players running, press `p` to switch between them.
 
 ## ⌨️ Usage
 
@@ -134,7 +134,7 @@ Lyrics are fetched at runtime from third-party services and are never bundled wi
 
 ## 🙏 Acknowledgements
 
-Sweep ships without any lyrics. Everything is fetched live from the services below, and the lyrics stay with their owners.
+Sweep Lyrics ships without any lyrics. Everything is fetched live from the services below, and the lyrics stay with their owners.
 
 - [LRCLIB](https://lrclib.net): free, open synced-lyrics database
 - Better Lyrics, Unison, LyricsPlus, KuGou and YouTube Music: additional lyric sources, through their unofficial public endpoints
@@ -143,7 +143,7 @@ Sweep ships without any lyrics. Everything is fetched live from the services bel
 - [Rich](https://github.com/Textualize/rich), [pykakasi](https://github.com/miurahr/pykakasi), [cmudict](https://github.com/prosegrinder/python-cmudict): rendering, Japanese romanization and pronunciation data, each under its own license
 - [Dux Shell](https://github.com/duxlabs-dev/dux-shell) (MIT): inspiration for the multi-provider lookup and the soft-edge wipe
 
-Several of these are unofficial endpoints that may break without notice. None of the services named here are affiliated with Sweep.
+Several of these are unofficial endpoints that may break without notice. None of the services named here are affiliated with Sweep Lyrics.
 
 ## 👤 Author
 
