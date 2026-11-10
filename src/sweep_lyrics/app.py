@@ -21,6 +21,7 @@ Usage:
 """
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 import re
 import time
 import colorsys
@@ -1133,6 +1134,10 @@ def load_lyrics_with_words(artist, title, album, duration):
     """
     global _LOAD_GEN
     enhanced = ""
+    # lrclib (duration + plain) runs alongside the provider race instead of after it
+    _lrc_pool = ThreadPoolExecutor(max_workers=1)
+    _lrc_job = _lrc_pool.submit(fetch_lrc, artist, title, album, duration)
+    _lrc_pool.shutdown(wait=False)
     if HAVE_PROVIDERS:  # multi-provider word-level lyrics first
         with _UPGRADE_LOCK:
             _LOAD_GEN += 1
@@ -1148,11 +1153,11 @@ def load_lyrics_with_words(artist, title, album, duration):
         if entries and any(wt for wt in word_timings):
             # still grab duration/plain from lrclib so Shazam mode &
             # plain-fallback keep working the same way
-            _, lrc_duration, plain = fetch_lrc(artist, title, album, duration)
+            _, lrc_duration, plain = _lrc_job.result()
             _set_lyrics_info(res.source, "word", len(entries), cached=res.cached)
             return entries, plain, lrc_duration, word_timings
 
-    synced, lrc_duration, plain = fetch_lrc(artist, title, album, duration)
+    synced, lrc_duration, plain = _lrc_job.result()
     entries = parse_lrc(synced) if synced else []
     _note = ""
     if HAVE_PROVIDERS:
@@ -5831,7 +5836,7 @@ def main():
                               # briefly mutate the tab/media title on pause
                               # without actually changing track, which used
                               # to force a full lyrics reload on every blip.
-    KEY_CHANGE_DEBOUNCE = 1.5  # seconds a new cur_key must persist before
+    KEY_CHANGE_DEBOUNCE = 0.4  # seconds a new cur_key must persist before
                                 # it's trusted as a genuine track change
     no_artist_since = None  # wall-clock time we first saw a real title w/ empty artist
     entries = []
@@ -6230,6 +6235,8 @@ def main():
                             if pending_key != raw_cur_key:
                                 pending_key = raw_cur_key
                                 pending_key_since = now_key_check
+                                if HAVE_PROVIDERS:  # handshakes overlap with the debounce wait
+                                    lyrics_providers.warm()
                                 cur_key = last_key
                             elif now_key_check - pending_key_since < KEY_CHANGE_DEBOUNCE:
                                 cur_key = last_key
