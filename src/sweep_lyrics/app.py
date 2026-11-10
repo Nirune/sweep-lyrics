@@ -4489,12 +4489,28 @@ def _line_sung_end(entries, word_timings, k, duration, sps):
     return start + span
 
 
+_DOT_OFF_RGB = (128, 128, 128)  # "colourless" end of the countdown-dot fade
+
+
+def _smoothstep(x):
+    x = max(0.0, min(1.0, x))
+    return x * x * (3.0 - 2.0 * x)
+
+
 def _render_apple_dots(gap_info, accent_hex):
     """Apple Music style 3-dot countdown for instrumental gaps.
 
     The row is symmetric (7 columns) so Align.center puts it on the same
     centre line as the icon. Do not pad it on one side: a leading pad
     shifts the visible dots right by pad/2 columns.
+
+    Each dot has a continuous intensity 0..1 and its colour is blended
+    colourless -> accent (same plain accent as the per-word position dots,
+    no bold), so it fades instead of switching:
+      intro / break: dot i fades in over the second before the old
+                     "lit" threshold (rem <= 3-i), all lit at rem <= 1.
+      outro:         all lit, then dots fade out right to left (dot 2 by
+                     rem 6, dot 1 by rem 3, dot 0 at the very end).
     """
     rem = gap_info.get("rem", 0.0)
     is_outro = gap_info.get("is_outro", False)
@@ -4502,28 +4518,23 @@ def _render_apple_dots(gap_info, accent_hex):
     dot_char = "●"
     sep = "  "
 
-    # Build the dots content first so we know its width.
-    if is_outro:
-        active_count = 3 if rem > 6.0 else (2 if rem > 3.0 else 1)
-    elif rem > 3.0:
-        active_count = 0
-    elif rem > 2.0:
-        active_count = 1
-    elif rem > 1.0:
-        active_count = 2
-    else:
-        active_count = 3
+    try:
+        acc = _hex_to_rgb(accent_hex)
+    except Exception:
+        acc = None
 
     parts = []
     for i in range(3):
         if is_outro:
-            style = f"dim {accent_hex}" if i < active_count else "dim white"
-        elif active_count == 0:
-            style = "dim white"
-        elif i < active_count:
-            style = f"bold {accent_hex}"
+            lvl = (rem - (3.0 * i)) / 1.5   # 1 -> fully lit, 0 -> colourless
         else:
-            style = "dim white"
+            lvl = 4.0 - i - rem             # fade in during the last seconds
+        lvl = _smoothstep(lvl)
+        if acc is None:
+            style = accent_hex if lvl >= 0.5 else "dim white"
+        else:
+            r, g, b = _lerp_rgb(_DOT_OFF_RGB, acc, lvl)
+            style = f"#{r:02x}{g:02x}{b:02x}"
         parts.append((dot_char, style))
 
     t = Text(justify="center")
@@ -5060,10 +5071,20 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                             else:
                                 body_lines.append(Text(spaced, style=f"bold {active_accent_hex}"))
                         body_lines.append(Text(""))
-                        if wn <= 16:
+                        if wn >= 1:
+                            # one dot per word, current one lit. Long (rap) lines
+                            # used to hide the whole row past 16 words; instead
+                            # tighten the spacing, then slide a window that
+                            # follows the current word.
+                            dot_w = max(10, panel_width - 8)
+                            gap = " " if wn * 2 <= dot_w else ""
+                            cap = dot_w // 2 if gap else dot_w
+                            lo = 0 if wn <= cap else max(0, min(wk - cap // 2, wn - cap))
                             dots = Text()
-                            for d in range(wn):
-                                dots.append("● " if d == wk else "· ",
+                            for d in range(lo, min(wn, lo + cap)):
+                                if d > lo:
+                                    dots.append(gap)
+                                dots.append("●" if d == wk else "·",
                                             style=active_accent_hex if d == wk else "dim")
                             body_lines.append(dots)
                 elif karaoke_enabled:
