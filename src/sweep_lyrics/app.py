@@ -1045,6 +1045,28 @@ _UPGRADE_PENDING = None  # dict set by the worker, consumed by the main loop
 _LOAD_GEN = 0            # bumped on every load_lyrics_with_words() call
 
 
+# What produced the lyrics on screen right now — shown in the debug overlay (d).
+_LYRICS_INFO = {"src": "none", "level": "none", "lines": 0,
+                "cached": False, "upg": False, "note": ""}
+
+
+def _set_lyrics_info(src, level, lines, cached=False, upg=False, note=""):
+    _LYRICS_INFO.update(src=src or "?", level=level or "?", lines=int(lines or 0),
+                        cached=bool(cached), upg=bool(upg), note=note or "")
+
+
+def _lyrics_info_tag():
+    i = _LYRICS_INFO
+    tag = f" src={i['src']} level={i['level']} lines={i['lines']}"
+    if i["cached"]:
+        tag += " cached"
+    if i["upg"]:
+        tag += " upg"
+    if i["note"]:
+        tag += f" ({i['note']})"
+    return tag
+
+
 def _upg_log(msg):
     try:
         if HAVE_PROVIDERS:
@@ -1123,10 +1145,15 @@ def load_lyrics_with_words(artist, title, album, duration):
             # still grab duration/plain from lrclib so Shazam mode &
             # plain-fallback keep working the same way
             _, lrc_duration, plain = fetch_lrc(artist, title, album, duration)
+            _set_lyrics_info(res.source, "word", len(entries), cached=res.cached)
             return entries, plain, lrc_duration, word_timings
 
     synced, lrc_duration, plain = fetch_lrc(artist, title, album, duration)
     entries = parse_lrc(synced) if synced else []
+    _note = ""
+    if HAVE_PROVIDERS:
+        _note = f"providers: {res.source}/{res.level}" if res else "providers: no result"
+    _set_lyrics_info("lrclib", "line" if entries else "none", len(entries), note=_note)
     return entries, plain, lrc_duration, None
 
 
@@ -4988,6 +5015,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                 f"raw_span={raw_span:.2f} words={est_words} syl={_dbg_syl} word_est={word_est_span:.2f} "
                 f"wipe_span={wipe_span:.2f} sync_pos={sync_pos:.2f} frac={frac:.3f} "
                 f"pace={_dbg_sps:.2f}s/syl({_dbg_pace_tag})"
+                f"{_lyrics_info_tag()}"
                 f"{wl_tag}{onset_tag}",
                 style="dim yellow",
             )
@@ -6099,6 +6127,7 @@ def main():
                         translations = None
                         romanized = None
                         _upg_log(f"applied: {_up['source']} word-level, {len(entries)} lines ({artist} / {title})")
+                        _set_lyrics_info(_up["source"], "word", len(entries), upg=True)
                     last_frame_time = now
 
                     if now - last_full_check >= FULL_CHECK_INTERVAL:
@@ -6608,6 +6637,7 @@ def main():
                                         plain_lyrics = plain_lyrics or (pick.get("plainLyrics") or "")
                                         lrc_d = pick.get("duration") or 0
                                         word_timings = None
+                                        _set_lyrics_info("lrclib-alt", "line", len(entries))
                                     artist, title = a, t
                                     if lrc_d:
                                         duration = lrc_d
