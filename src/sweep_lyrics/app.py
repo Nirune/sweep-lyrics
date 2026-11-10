@@ -2280,6 +2280,7 @@ _SETTINGS_CATEGORIES = [
         ("context_lines",        "Context lines (min)",      "int",   3,    1,     9,    1),
         ("show_cover",           "Show cover art",           "bool",  True,  None, None, None),
         ("cover_accent",         "Accent from cover art",    "bool",  False, None, None, None),
+        ("show_instrumental",    "Show instrumental icon",   "bool",  True,  None, None, None),
     ]),
 ]
 
@@ -2335,6 +2336,7 @@ def apply_settings(s):
     global ONSET_FLUX_PERCENTILE, ONSET_MIN_INTERVAL, SHAZAM_OFFSET_FUDGE
     global LAYOUT_MODE, COVER_ACCENT_ENABLED, WORD_MODE, WORD_SIZE, WORD_STYLE, WORD_GRADIENT
     global COVER_ENABLED
+    global INSTRUMENTAL_ENABLED
     KARAOKE_LEAD = float(s.get("karaoke_lead", 0.6))
     KARAOKE_HOLD_MAX = float(s.get("karaoke_hold_max", 3.0))
     KARAOKE_SECONDS_PER_WORD = float(s.get("karaoke_sec_per_word", 0.6))
@@ -2352,6 +2354,7 @@ def apply_settings(s):
     POLL_INTERVAL = float(s.get("poll_interval", 0.02))
     COVER_ACCENT_ENABLED = bool(s.get("cover_accent", False))
     COVER_ENABLED = COVER_AVAILABLE and bool(s.get("show_cover", True))
+    INSTRUMENTAL_ENABLED = bool(s.get("show_instrumental", True))
     try:
         LAYOUT_MODE = int(s.get("layout_mode", 0))
     except (TypeError, ValueError):
@@ -2376,6 +2379,12 @@ LAYOUT_MODE = 0  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock
 WORD_GRADIENT = 3  # 0 off · 1 letter · 2 column · 3 wipe (per-word mode)
 WORD_STYLE = 5  # 0 dots · 1 solid · 2 text · 3 sextant · 4 scaled (OSC 66) · 5 image · 6 ascii
 WORD_SIZE = 1  # 0 small · 1 medium · 2 large (per-word mode)
+# ---- instrumental icon (intro / long breaks / outro) -------------------
+INSTRUMENTAL_ENABLED = True   # settings: show_instrumental
+INSTRUMENTAL_ICON = "♫"      # swap to "♪" if the emoji colours clash with your theme
+INSTRUMENTAL_MIN_GAP = 5.0    # seconds of silence before the icon appears
+INSTRUMENTAL_WORD_GLYPH = "♫"  # per-word mode draws this big; must exist in _BIG_FONT
+INSTRUMENTAL_LINGER = 0.6     # keep the last sung line this long first
 WORD_MODE = True  # True → show only the currently sung word, big + centered
 
 
@@ -2404,6 +2413,7 @@ def show_settings(live, settings):
         "layout_mode": "classic · bait · timeline · hud · dock",
         "word_mode": "one word at a time, big + centered",
         "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
+        "show_instrumental": "music icon during intro, long breaks and outro",
         "word_style": "dots/solid/text/sextant/scaled/image/ascii",
         "word_gradient": "off/letter/column/wipe (wipe = karaoke fill)",
         "word_size": "small · medium · large",
@@ -3648,6 +3658,7 @@ _BIG_FONT = {
     "-": ["   ", "   ", "###", "   ", "   "],
     "(": ["  #", " # ", " # ", " # ", "  #"],
     ")": ["#  ", " # ", " # ", " # ", "#  "],
+    "♫": ["  #####", "  #   #", "  #   #", "### ###", "### ###"],
 }
 
 
@@ -4038,6 +4049,25 @@ def _word_font_path():
     return _WORD_FONT_PATH[0] or None
 
 
+_ICON_FONT_PATH = []
+
+
+def _icon_font_path():
+    """TTF for the instrumental icon: a bold sans that really has U+266B
+    (the normal word font may not, which would draw a missing-glyph box)."""
+    if not _ICON_FONT_PATH:
+        path = ""
+        try:
+            path = subprocess.run(["fc-match", "-f", "%{file}", "sans-serif:bold:charset=266b"],
+                                  capture_output=True, text=True, timeout=2).stdout.strip()
+        except Exception:
+            pass
+        if not path or not os.path.exists(path):
+            path = _word_font_path() or ""
+        _ICON_FONT_PATH.append(path)
+    return _ICON_FONT_PATH[0] or None
+
+
 def _render_word_png(word, rgb, cols_max, rows_cap, rows_target, cw, ch,
                      imode=0, pq=0, rgb2=None):
     """Bold word with soft glow → PNG bytes sized to a whole number of cells.
@@ -4048,7 +4078,7 @@ def _render_word_png(word, rgb, cols_max, rows_cap, rows_target, cw, ch,
     text = word.upper()
     pad = int(ch * 0.7)
     size = max(12, int(rows_target * ch * 0.66))
-    path = _word_font_path()
+    path = _icon_font_path() if word == INSTRUMENTAL_WORD_GLYPH else _word_font_path()
     while True:
         font = ImageFont.truetype(path, size) if path else ImageFont.load_default(size)
         l, t, r, b = font.getbbox(text)
@@ -4422,6 +4452,97 @@ def karaoke_line(text, frac, accent_hex, word_timings=None, sync_pos=None,
     return t
 
 
+def _line_sung_end(entries, word_timings, k, duration, sps):
+    """When line k stops being sung: last word's end, else the same
+    estimate the karaoke wipe uses (capped at the next row)."""
+    start = entries[k][0]
+    wt = word_timings[k] if word_timings and 0 <= k < len(word_timings) else None
+    if wt:
+        last = wt[-1]
+        end = getattr(last, "end", None)
+        return end if end else last[0] + 0.6
+    nxt = entries[k + 1][0] if k + 1 < len(entries) else max(start + 4, duration or start + 4)
+    est = _estimate_line_seconds(entries[k][1] or "", sps)
+    span = min(nxt - start, est) if nxt - start > 0 else est
+    return start + span
+
+
+def _instrumental_gap(entries, word_timings, idx, sync_pos, duration, sps):
+    """True while the song is in a long instrumental stretch: intro, a
+    break between lyrics, or the outro. See INSTRUMENTAL_* constants."""
+    n = len(entries)
+    if n == 0:
+        return False
+
+    def blank(k):
+        return not (entries[k][1] or "").strip()
+
+    if idx < 0:  # before the first row: the intro
+        gap_start, j = 0.0, 0
+    else:
+        k = idx
+        if blank(k):  # blank rows mark silence; measure from the line before them
+            while k > 0 and blank(k - 1):
+                k -= 1
+            gap_start = (_line_sung_end(entries, word_timings, k - 1, duration, sps)
+                         if k > 0 else 0.0)
+        else:
+            gap_start = _line_sung_end(entries, word_timings, idx, duration, sps)
+        if sync_pos < gap_start + INSTRUMENTAL_LINGER:
+            return False
+        j = idx + 1
+    while j < n and blank(j):
+        j += 1
+    if j < n:
+        gap_end = entries[j][0]
+    elif duration and duration > gap_start:
+        gap_end = duration  # outro: silence until the song ends
+    else:
+        return False
+    return gap_end - gap_start >= INSTRUMENTAL_MIN_GAP
+
+
+def _instrumental_rows(accent_hex, panel_width, available):
+    """Lines for the instrumental icon. Per-word mode: the glyph goes through
+    the same renderer as a lyric word (size = WORD_SIZE, look = WORD_STYLE),
+    always in the near-white 'not sung yet' colour. Other modes: one small
+    bold white line."""
+    plain = Text(INSTRUMENTAL_ICON, style="bold white", justify="center")
+    if not WORD_MODE:
+        return [plain]
+    try:
+        w = INSTRUMENTAL_WORD_GLYPH
+        grad, wp = 3, 0.0  # wipe at 0% = the near-white rest colour
+        ga = _hex_to_rgb(accent_hex)
+        gb = _grad_end(ga)
+        eff_style = _effective_word_style(WORD_STYLE)
+        sz_idx = max(0, min(2, WORD_SIZE))
+        max_cw, max_ch = max(10, panel_width - 8), max(3, available - 2)
+        rows = None
+        if eff_style in (0, 1, 3, 6):
+            letters = []
+            big = _big_word_rows(
+                w, max_cw, max_ch,
+                max_s=_WORD_SIZE_DOTS[eff_style][sz_idx],
+                style=eff_style, letters_out=letters)
+            if big:
+                rows = _color_rows(big, letters, grad, wp, ga, gb)
+        elif eff_style == 4:
+            rows = _osc66_word_rows(w, max_cw, max_ch, sz_idx, ga, grad, wp, gb)
+        elif eff_style == 5:
+            base = _boost_accent_rgb(_get_accent_rgb(), intensity=0.0)
+            rows = _word_image_rows(w, base, max_cw, max_ch, sz_idx, grad, wp, _grad_end(base))
+        if not rows:
+            return [plain]
+        return [Text(""), *rows, Text("")]
+    except Exception:
+        return [plain]
+
+
+def _instrumental_text(accent_hex):
+    return Text(INSTRUMENTAL_ICON, style="bold white", justify="center")
+
+
 def _bait_bounds(entries, idx, max_lines=8):
     """[start, end] of the stanza (bait) that contains entry `idx`.
 
@@ -4702,6 +4823,9 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         if word_timings and 0 <= idx < len(word_timings):
             active_word_timings = word_timings[idx]
 
+        in_gap = INSTRUMENTAL_ENABLED and _instrumental_gap(
+            entries, word_timings, idx, sync_pos, duration, song_sec_per_syllable)
+
         debug_line = None
         if debug_karaoke:
             # Raw numbers behind this frame's wipe calc for the active
@@ -4738,6 +4862,11 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                 style="dim yellow",
             )
 
+        if in_gap and idx < 0:
+            body_lines.append(Text(""))
+            body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available))
+            body_lines.append(Text(""))
+
         for i in range(start, end + 1):
             _, line_text = entries[i]
             if romanize_enabled and romanized and i < len(romanized) and romanized[i]:
@@ -4745,12 +4874,16 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             # skip blank LRC rows (timed empty lines) — they only produce
             # stray underline/bar artifacts under the real lyric
             if not (line_text or "").strip():
+                if in_gap and i == idx:
+                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available))
                 continue
             line_text = line_text or " "
             if i == idx:
                 if i > start and layout != 3:
                     body_lines.append(Text(""))
-                if WORD_MODE:
+                if in_gap:
+                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available))
+                elif WORD_MODE:
                     cw = _current_word(
                         line_text, frac, active_word_timings, sync_pos,
                         line_end=(next_line_start
@@ -4840,7 +4973,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                         marked.append("▌ ", style=active_accent_hex)
                         marked.append(line_text, style=f"bold {active_accent_hex}")
                     body_lines.append(marked)
-                if translate_enabled and translations and i < len(translations) and translations[i]:
+                if translate_enabled and translations and i < len(translations) and translations[i] and not in_gap:
                     body_lines.append(Text(translations[i], style="dim italic"))
                 if debug_line is not None:
                     body_lines.append(debug_line)
