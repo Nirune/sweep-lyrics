@@ -4108,6 +4108,8 @@ def _render_word_png(word, rgb, cols_max, rows_cap, rows_target, cw, ch,
             break
         size = int(size * 0.9)
     cols = min(cols_max, max(2, -(-(tw + 2 * pad) // cw)))
+    if word == INSTRUMENTAL_WORD_GLYPH and cols % 2 == 0 and cols < cols_max:
+        cols += 1  # odd width, same parity as the 7-col dots row -> exact centring
     rows = min(rows_cap, max(2, -(-(th + 2 * pad) // ch)))
     W, H = cols * cw, rows * ch
     x, y = (W - tw) // 2 - l, (H - th) // 2 - t
@@ -4487,12 +4489,12 @@ def _line_sung_end(entries, word_timings, k, duration, sps):
     return start + span
 
 
-def _render_apple_dots(gap_info, accent_hex, center_cols=None):
+def _render_apple_dots(gap_info, accent_hex):
     """Apple Music style 3-dot countdown for instrumental gaps.
 
-    center_cols: if set, the dots row is padded with leading spaces so its
-    visual centre lines up with a kitty image that is `center_cols` wide,
-    drawn left-aligned starting at column 0.
+    The row is symmetric (7 columns) so Align.center puts it on the same
+    centre line as the icon. Do not pad it on one side: a leading pad
+    shifts the visible dots right by pad/2 columns.
     """
     rem = gap_info.get("rem", 0.0)
     is_outro = gap_info.get("is_outro", False)
@@ -4524,14 +4526,7 @@ def _render_apple_dots(gap_info, accent_hex, center_cols=None):
             style = "dim white"
         parts.append((dot_char, style))
 
-    dot_content_width = 3 + 2 * len(sep)  # 3 dots + 2 separators of len(sep)
-
     t = Text(justify="center")
-    # If the caller tells us where the image is centred, nudge the dots to match.
-    if center_cols is not None and center_cols > dot_content_width:
-        pad = " " * ((center_cols - dot_content_width) // 2)
-        t.append(pad)
-
     for i, (ch, style) in enumerate(parts):
         if i > 0:
             t.append(sep)
@@ -4632,7 +4627,7 @@ def _instrumental_rows(accent_hex, panel_width, available, gap_info=None):
         if not rows:
             dots_line = _render_apple_dots(gap_info, accent_hex) if gap_info else None
             return [plain, dots_line] if dots_line else [plain]
-        dots_line = _render_apple_dots(gap_info, accent_hex, center_cols=img_cols) if gap_info else None
+        dots_line = _render_apple_dots(gap_info, accent_hex) if gap_info else None
         res = [Text(""), *rows]
         if dots_line:
             res.append(dots_line)
