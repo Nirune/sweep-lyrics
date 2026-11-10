@@ -2282,6 +2282,9 @@ _SETTINGS_CATEGORIES = [
         ("cover_accent",         "Accent from cover art",    "bool",  False, None, None, None),
         ("show_instrumental",    "Show instrumental icon",   "bool",  True,  None, None, None),
     ]),
+    ("per_word", "Per-word mode", [
+        ("show_adlib",           "Show adlib",               "bool",  False, None, None, None),
+    ]),
 ]
 
 # flat list of all items (for defaults / load / apply)
@@ -2291,11 +2294,12 @@ _SETTINGS_SCHEMA = [item for _, _, items in _SETTINGS_CATEGORIES for item in ite
 # "advanced" is a group: it opens a submenu of the categories listed in
 # _SETTINGS_ADVANCED instead of an item list.
 _SETTINGS_TOP = ["layout", "display", "advanced"]
-_SETTINGS_ADVANCED = ["karaoke", "onset", "sync"]
+_SETTINGS_ADVANCED = ["per_word", "karaoke", "onset", "sync"]
 _SETTINGS_BLURBS = {
     "layout": "mode and per-word look",
     "display": "context lines, cover accent",
     "advanced": "wipe timing, onset, sync",
+    "per_word": "adlib and backing vocal options",
     "karaoke": "wipe timing and easing",
     "onset": "audio onset snapping",
     "sync": "offset step, shazam lag",
@@ -2337,6 +2341,7 @@ def apply_settings(s):
     global LAYOUT_MODE, COVER_ACCENT_ENABLED, WORD_MODE, WORD_SIZE, WORD_STYLE, WORD_GRADIENT
     global COVER_ENABLED
     global INSTRUMENTAL_ENABLED
+    global SHOW_ADLIB
     KARAOKE_LEAD = float(s.get("karaoke_lead", 0.6))
     KARAOKE_HOLD_MAX = float(s.get("karaoke_hold_max", 3.0))
     KARAOKE_SECONDS_PER_WORD = float(s.get("karaoke_sec_per_word", 0.6))
@@ -2355,6 +2360,7 @@ def apply_settings(s):
     COVER_ACCENT_ENABLED = bool(s.get("cover_accent", False))
     COVER_ENABLED = COVER_AVAILABLE and bool(s.get("show_cover", True))
     INSTRUMENTAL_ENABLED = bool(s.get("show_instrumental", True))
+    SHOW_ADLIB = bool(s.get("show_adlib", False))
     try:
         LAYOUT_MODE = int(s.get("layout_mode", 0))
     except (TypeError, ValueError):
@@ -2386,6 +2392,7 @@ INSTRUMENTAL_MIN_GAP = 5.0    # seconds of silence before the icon appears
 INSTRUMENTAL_WORD_GLYPH = "♫"  # per-word mode draws this big; must exist in _BIG_FONT
 INSTRUMENTAL_LINGER = 0.6     # keep the last sung line this long first
 WORD_MODE = True  # True → show only the currently sung word, big + centered
+SHOW_ADLIB = False  # settings: show_adlib (per-word mode: False skips words in parentheses)
 
 
 # runtime inter-word pause (overridable via settings; _char_weights reads it)
@@ -2414,6 +2421,7 @@ def show_settings(live, settings):
         "word_mode": "one word at a time, big + centered",
         "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
         "show_instrumental": "music icon during intro, long breaks and outro",
+        "show_adlib": "show words in parentheses (adlibs / backing vocals)",
         "word_style": "dots/solid/text/sextant/scaled/image/ascii",
         "word_gradient": "off/letter/column/wipe (wipe = karaoke fill)",
         "word_size": "small · medium · large",
@@ -4674,6 +4682,14 @@ def _bait_bounds(entries, idx, max_lines=8):
     return s, e
 
 
+def _is_adlib_line(text):
+    """True if line consists entirely of words in parentheses: e.g. (you), (yeah yeah)."""
+    s = (text or "").strip()
+    if not s:
+        return False
+    return bool(re.fullmatch(r"(\s*\([^)]*\)\s*)+", s))
+
+
 def render_frame(artist, title, entries, pos, duration, status, width, height,
                   zoom_hint=True, shazam_hint=False, shazam_active=False,
                   cover_offset=0, reidentify_soon=False, auto_paused=False,
@@ -4792,24 +4808,31 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         # which still reflects real playback position.
         sync_pos = pos + sync_offset
         idx = current_index(entries, sync_pos)
+        if WORD_MODE and not SHOW_ADLIB and entries and idx >= 0:
+            k = idx
+            while k >= 0 and _is_adlib_line(entries[k][1]):
+                k -= 1
+            idx = k
+
         start = max(0, idx - context_lines)
         end = min(len(entries) - 1, idx + context_lines)
         if layout == 1 and not (ZEN_MODE or WORD_MODE):
             start, end = _bait_bounds(entries, idx)
 
         line_start = entries[idx][0] if idx >= 0 else 0
-        next_line_start = entries[idx + 1][0] if idx + 1 < len(entries) else max(line_start + 4, duration or line_start + 4)
+        nxt_idx = idx + 1
+        if WORD_MODE and not SHOW_ADLIB and entries:
+            while nxt_idx < len(entries) and _is_adlib_line(entries[nxt_idx][1]):
+                nxt_idx += 1
+        next_line_start = entries[nxt_idx][0] if nxt_idx < len(entries) else max(line_start + 4, duration or line_start + 4)
         current_line_text = entries[idx][1] if idx >= 0 else ""
         if romanize_enabled and romanized and 0 <= idx < len(romanized) and romanized[idx]:
-            # Swap in the romanized line wherever the original would be
-            # used — not just for display, but for the word-count
-            # estimate below too. That estimate is what the karaoke wipe
-            # timing is based on, and Japanese (and similar space-less
-            # scripts) has no word boundaries for `.split()` to find, so
-            # the whole line reads as a single "word" and the wipe fires
-            # almost instantly. Romaji has real spaces, so this fixes the
-            # timing as a side effect of fixing the display.
             current_line_text = romanized[idx]
+
+        if WORD_MODE and not SHOW_ADLIB and current_line_text:
+            cleaned = re.sub(r"\s*\([^)]*\)", "", current_line_text).strip()
+            if cleaned:
+                current_line_text = cleaned
 
         # The gap to the NEXT line's timestamp often includes instrumental
         # breaks / held notes / silence before the next lyric starts — not
@@ -4906,6 +4929,11 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         active_word_timings = None
         if word_timings and 0 <= idx < len(word_timings):
             active_word_timings = word_timings[idx]
+        if WORD_MODE and not SHOW_ADLIB and active_word_timings:
+            active_word_timings = [
+                wt for wt in active_word_timings
+                if not (wt[1].strip().startswith("(") or wt[1].strip().endswith(")"))
+            ]
 
         in_gap = INSTRUMENTAL_ENABLED and _instrumental_gap(
             entries, word_timings, idx, sync_pos, duration, song_sec_per_syllable)
@@ -4968,17 +4996,20 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                 if in_gap:
                     body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap))
                 elif WORD_MODE:
+                    lt = current_line_text if (WORD_MODE and not SHOW_ADLIB) else line_text
                     cw = _current_word(
-                        line_text, frac, active_word_timings, sync_pos,
+                        lt, frac, active_word_timings, sync_pos,
                         line_end=(next_line_start
                                   if next_line_start and next_line_start > line_start
                                   else None))
                     if cw is not None:
                         w, wk, wn, wp = cw
-                        # pure word only: drop , . ! ? " … etc. Keep inner ' and -,
-                        # and ( ) — they mark backing vocals.
-                        w = re.sub(r"^[^\w(]+|[^\w)]+$", "", w)
-                        w = re.sub(r"[^\w'’\-()]", "", w).replace("_", "")
+                        # pure word only: drop , . " … etc. Keep inner ' and -,
+                        # keep ? and ! for expression, and keep ( ) for adlibs if enabled.
+                        if not SHOW_ADLIB:
+                            w = w.replace("(", "").replace(")", "")
+                        w = re.sub(r"^[^\w(]+|[^\w)?!]+$", "", w)
+                        w = re.sub(r"[^\w'’\-()?!]", "", w).replace("_", "")
                         big, extra, letters = None, None, []
                         grad = max(0, min(3, WORD_GRADIENT))
                         ga = _hex_to_rgb(active_accent_hex)
