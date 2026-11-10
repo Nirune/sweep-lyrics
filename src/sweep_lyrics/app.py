@@ -92,6 +92,10 @@ SEEK_SMALL = 1.0  # seconds, "<" / ">" keys (shift)
 ACCENT        = "bright_cyan"      # borders, titles, progress fill
 ARTIST_ACCENT = "bright_white"     # artist name
 ACCENT_DIM    = "cyan"             # secondary labels / inactive
+# ACCENT / ACCENT_DIM are re-assigned each frame by _sync_ui_accent() when
+# "Accent from cover art" is on; these keep the theme (ANSI) defaults.
+_ACCENT_BASE = ACCENT
+_ACCENT_DIM_BASE = ACCENT_DIM
 KARAOKE_ACCENT = "#00e5ff"         # active karaoke wipe (bright cyan)
 WARN_ACCENT   = "bright_yellow"
 MUTED         = "dim"
@@ -2319,6 +2323,7 @@ _SETTINGS_CATEGORIES = [
         ("context_lines",        "Context lines (min)",      "int",   3,    1,     9,    1),
         ("show_cover",           "Show cover art",           "bool",  True,  None, None, None),
         ("cover_accent",         "Accent from cover art",    "bool",  False, None, None, None),
+        ("accent_fade",          "Accent fade (s)",          "float", 0.7,  0.0,   10.0, 0.25),
         ("show_instrumental",    "Show instrumental icon",   "bool",  True,  None, None, None),
     ]),
     ("per_word", "Per-word mode", [
@@ -2381,6 +2386,7 @@ def apply_settings(s):
     global COVER_ENABLED
     global INSTRUMENTAL_ENABLED
     global SHOW_ADLIB
+    global UI_ACCENT_FADE
     KARAOKE_LEAD = float(s.get("karaoke_lead", 0.6))
     KARAOKE_HOLD_MAX = float(s.get("karaoke_hold_max", 3.0))
     KARAOKE_SECONDS_PER_WORD = float(s.get("karaoke_sec_per_word", 0.6))
@@ -2397,6 +2403,10 @@ def apply_settings(s):
     _INTER_WORD_PAUSE = float(s.get("inter_word_pause", 0.45))
     POLL_INTERVAL = float(s.get("poll_interval", 0.02))
     COVER_ACCENT_ENABLED = bool(s.get("cover_accent", False))
+    try:
+        UI_ACCENT_FADE = max(0.0, float(s.get("accent_fade", 0.7)))
+    except (TypeError, ValueError):
+        UI_ACCENT_FADE = 0.7
     COVER_ENABLED = COVER_AVAILABLE and bool(s.get("show_cover", True))
     INSTRUMENTAL_ENABLED = bool(s.get("show_instrumental", True))
     SHOW_ADLIB = bool(s.get("show_adlib", False))
@@ -2460,6 +2470,8 @@ def show_settings(live, settings):
         "word_mode": "one word at a time, big + centered",
         "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
         "show_instrumental": "music icon during intro, long breaks and outro",
+        "cover_accent": "tints borders, titles, progress bar and lyrics from the cover",
+        "accent_fade": "how long the UI colour takes to settle on a new song (0 = instant)",
         "show_adlib": "show words in parentheses (adlibs / backing vocals)",
         "word_style": "dots/solid/text/sextant/scaled/image/ascii",
         "word_gradient": "off/letter/column/wipe (wipe = karaoke fill)",
@@ -2578,6 +2590,7 @@ def show_settings(live, settings):
         return t
 
     def _render():
+        _sync_ui_accent()
         console.clear()
         width = max(40, min(console.width - 2, 72))
 
@@ -3005,15 +3018,44 @@ def _get_accent_rgb():
     cache = _ACCENT_RGB_CACHE
     if cache["rgb"] is not None and now - cache["ts"] < KITTY_COLOR_REFRESH:
         return cache["rgb"]
-    hexval = _query_kitty_color(ACCENT)
+    hexval = _query_kitty_color(_ACCENT_BASE)
     if hexval:
         rgb = _hex_to_rgb(hexval)
     else:
-        tc = Color.parse(ACCENT).get_truecolor()
+        tc = Color.parse(_ACCENT_BASE).get_truecolor()
         rgb = (tc.red, tc.green, tc.blue)
     cache["rgb"] = rgb
     cache["ts"] = now
     return rgb
+
+
+UI_ACCENT_FADE = 10.0  # seconds for the whole UI to settle on a new cover accent
+_UI_ACCENT = {"rgb": None, "ts": 0.0}
+
+
+def _sync_ui_accent():
+    """Retint the whole UI (borders, titles, progress bar, captions, menus)
+    from the cover accent, easing from the previous song's colour to the
+    new one. Off (or no cover colour) -> the theme's ANSI colours again.
+    Call once per frame before drawing."""
+    global ACCENT, ACCENT_DIM
+    st = _UI_ACCENT
+    if not (COVER_ACCENT_ENABLED and COVER_ACCENT_RGB is not None):
+        ACCENT, ACCENT_DIM = _ACCENT_BASE, _ACCENT_DIM_BASE
+        st["rgb"] = None
+        return
+    now = time.time()
+    tgt = COVER_ACCENT_RGB
+    cur = st["rgb"]
+    if cur is None or UI_ACCENT_FADE <= 0.05:
+        cur = tgt  # first tint (nothing to ease from) or fade set to 0 = instant
+    else:
+        k = 1.0 - math.exp(-max(0.0, now - st["ts"]) / (UI_ACCENT_FADE / 3.0))
+        cur = tuple(a + (b - a) * k for a, b in zip(cur, tgt))
+    st["rgb"], st["ts"] = cur, now
+    r, g, b = (int(round(c)) for c in cur)
+    ACCENT = f"#{r:02x}{g:02x}{b:02x}"
+    ACCENT_DIM = f"#{int(r * 0.66):02x}{int(g * 0.66):02x}{int(b * 0.66):02x}"
 
 
 def _boost_accent_rgb(rgb, min_saturation=0.25, max_saturation=0.25, min_value=0.78,
@@ -4751,6 +4793,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     nonzero (a cover image is showing on the left via Kitty's graphics
     layer), the panel is narrowed and shifted right by that many
     columns so it doesn't get drawn over the image area."""
+    _sync_ui_accent()
     panel_width = max(20, width - cover_offset)
     body_lines = []
     timeline_active = set()  # id()s of body_lines entries that get the bold rail segment
