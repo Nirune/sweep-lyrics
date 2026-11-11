@@ -2,31 +2,17 @@
 
 Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPRIS and sweeps a soft-edged highlight across each word as it is sung.
 
-![Sweep Lyrics demo](docs/demo.gif)
 
-## 🎥 Preview Videos
 
+## 🎥 Preview
 
 ### Per-word mode
 
-https://github.com/user-attachments/assets/b5506b52-c716-494a-8f37-e27400ad5dcf
+![Sweep Lyrics per-word mode](docs/demo.gif)
 
-### Full Lyrics
+### Full lyrics
 
-https://github.com/user-attachments/assets/dbbcba10-8a24-4078-a05a-81fc9f64abf0
-
-
-
-
-
-
-
-
-
-
-
-
-
+![Sweep Lyrics full lyrics mode](docs/demo-full.gif)
 
 ## ✨ Features
 
