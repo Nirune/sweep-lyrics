@@ -8,8 +8,8 @@ MIT-licensed dux-go lyrics package; the code here is an independent rewrite.
 How a result is picked (modelled on the Dux README):
   * every enabled provider is asked at the same time, 12 s overall
   * word sync beats line sync beats plain text, then config priority decides
-  * a word result wins once no word-capable provider ahead of it is still out
-  * a line/plain result is held up to 2 s in case better sync shows up
+  * a word result wins the moment it lands (a better-ranked word result arriving later only updates the cache)
+  * the first hit is held up to 0.4 s in case better sync shows up (later ones swap in live)
   * a "synced" result whose stamps are all zero counts as a miss
 
 Output is enhanced LRC: [mm:ss.xx]<mm:ss.xx>word <mm:ss.xx>word<mm:ss.xx>
@@ -41,6 +41,7 @@ import argparse
 import base64
 import hashlib
 import html
+import http.client
 import json
 import os
 import queue
@@ -61,7 +62,7 @@ from typing import Callable
 
 UA = "sweep-lyrics/2"
 OVERALL_TIMEOUT = 12.0   # whole lookup
-HOLD_SECONDS = 2.0       # how long a line/plain winner waits for better sync
+HOLD_SECONDS = 0.4       # how long the first hit waits for a better one (late winners swap in live)
 DURATION_TOL = 3         # seconds, KuGou / LRCLIB candidate matching
 MAX_BODY = 4 << 20
 MISS_CODES = {400, 401, 404, 410, 422}  # Better Lyrics answers 401 for "not cached yet"
@@ -230,29 +231,89 @@ def dur_ok(want_sec: int, got_sec) -> bool:
 # --------------------------------------------------------------------------- #
 # http
 # --------------------------------------------------------------------------- #
-class _SameOrigin(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        a, b = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
-        if (a.scheme, a.netloc) != (b.scheme, b.netloc):
-            raise urllib.error.HTTPError(req.full_url, code, "refusing cross-origin redirect", headers, fp)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-_OPENER = urllib.request.build_opener(_SameOrigin)
+POOL_IDLE_TTL = 60.0      # seconds an idle keep-alive connection may be reused
+POOL_MAX_IDLE = 4         # idle connections kept per host
+MAX_REDIRECTS = 4
+_POOL: dict[tuple[str, str], list[tuple[http.client.HTTPConnection, float]]] = {}
+_POOL_LOCK = threading.Lock()
 _raw_lock = threading.Lock()
+
+
+def _new_conn(scheme: str, netloc: str, timeout: float) -> http.client.HTTPConnection:
+    cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+    return cls(netloc, timeout=timeout)
+
+
+def _take_conn(scheme: str, netloc: str, timeout: float):
+    """(conn, reused). Reuses a fresh idle connection, else makes a new one."""
+    now = time.monotonic()
+    with _POOL_LOCK:
+        idle = _POOL.get((scheme, netloc), [])
+        while idle:
+            conn, t = idle.pop()
+            if now - t <= POOL_IDLE_TTL and conn.sock is not None:
+                conn.timeout = timeout
+                conn.sock.settimeout(timeout)
+                return conn, True
+            conn.close()
+    return _new_conn(scheme, netloc, timeout), False
+
+
+def _give_conn(scheme: str, netloc: str, conn: http.client.HTTPConnection) -> None:
+    with _POOL_LOCK:
+        idle = _POOL.setdefault((scheme, netloc), [])
+        if len(idle) >= POOL_MAX_IDLE:
+            conn.close()
+        else:
+            idle.append((conn, time.monotonic()))
+
+
+def _request(scheme: str, netloc: str, path: str, timeout: float):
+    """One GET over a pooled connection -> (status, headers, body)."""
+    headers = {"User-Agent": UA, "Accept": "application/json"}
+    for attempt in (0, 1):
+        conn, reused = _take_conn(scheme, netloc, timeout)
+        try:
+            conn.request("GET", path, headers=headers)
+            resp = conn.getresponse()
+            body = resp.read(MAX_BODY + 1)
+        except TimeoutError:
+            conn.close()
+            raise
+        except (http.client.HTTPException, OSError):
+            conn.close()
+            if reused and attempt == 0:  # idle connection the server already dropped: retry fresh
+                continue
+            raise
+        if resp.will_close or not resp.isclosed() or len(body) > MAX_BODY:
+            conn.close()
+        else:
+            _give_conn(scheme, netloc, conn)
+        return resp.status, resp.headers, body
+    raise OSError("unreachable")
 
 
 def http_get(url: str, params: dict, timeout: float) -> bytes:
     # spaces must go out as %20, KuGou finds nothing for "a - b" when they are '+'
     qs = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
-    req = urllib.request.Request(f"{url}?{qs}", headers={"User-Agent": UA, "Accept": "application/json"})
-    try:
-        with _OPENER.open(req, timeout=timeout) as resp:
-            body = resp.read(MAX_BODY + 1)
-    except urllib.error.HTTPError as e:
-        if e.code in MISS_CODES:
-            raise Miss(f"HTTP {e.code}") from None
-        raise
+    cur = f"{url}?{qs}"
+    origin = urllib.parse.urlsplit(cur)[:2]
+    for _ in range(MAX_REDIRECTS + 1):
+        sp = urllib.parse.urlsplit(cur)
+        if sp[:2] != origin:
+            raise urllib.error.HTTPError(cur, 0, "refusing cross-origin redirect", None, None)
+        path = (sp.path or "/") + (f"?{sp.query}" if sp.query else "")
+        status, hdrs, body = _request(sp.scheme, sp.netloc, path, timeout)
+        if status in (301, 302, 303, 307, 308) and hdrs.get("Location"):
+            cur = urllib.parse.urljoin(cur, hdrs["Location"])
+            continue
+        break
+    else:
+        raise urllib.error.HTTPError(cur, 310, "too many redirects", None, None)
+    if not 200 <= status < 300:
+        if status in MISS_CODES:
+            raise Miss(f"HTTP {status}")
+        raise urllib.error.HTTPError(cur, status, http.client.responses.get(status, ""), hdrs, None)
     if len(body) > MAX_BODY:
         raise ValueError("response too large")
     if RAW:
@@ -261,6 +322,30 @@ def http_get(url: str, params: dict, timeout: float) -> bytes:
     return body
 
 
+def warm() -> None:
+    """Open TCP+TLS to every provider host in the background so the next lookup skips the handshakes.
+    Call it as soon as a track change is first noticed; hosts that already hold a fresh idle connection are skipped."""
+    def one(scheme: str, netloc: str) -> None:
+        now = time.monotonic()
+        with _POOL_LOCK:
+            if any(now - t <= POOL_IDLE_TTL for _, t in _POOL.get((scheme, netloc), [])):
+                return
+        try:
+            conn = _new_conn(scheme, netloc, 4.0)
+            conn.connect()
+        except Exception:
+            return
+        _give_conn(scheme, netloc, conn)
+
+    seen = set()
+    for u in WARM_URLS:
+        sp = urllib.parse.urlsplit(u)
+        if (sp.scheme, sp.netloc) not in seen:
+            seen.add((sp.scheme, sp.netloc))
+            threading.Thread(target=one, args=(sp.scheme, sp.netloc), daemon=True).start()
+
+
+# --------------------------------------------------------------------------- #
 def get_json(url: str, params: dict, timeout: float):
     return json.loads(http_get(url, params, timeout))
 
@@ -602,7 +687,7 @@ def finalize(parsed: Parsed, req: Req) -> Parsed:
 # providers
 # --------------------------------------------------------------------------- #
 def fetch_betterlyrics(req: Req) -> Parsed:
-    payload = get_json("https://lyrics-api.boidu.dev/getLyrics", req.query("s", "a", "al", "d"), 4)
+    payload = get_json(BETTERLYRICS_URL, req.query("s", "a", "al", "d"), 4)
     ttml = payload.get("ttml") if isinstance(payload, dict) else None
     if not ttml:
         raise Miss("no ttml")
@@ -610,7 +695,7 @@ def fetch_betterlyrics(req: Req) -> Parsed:
 
 
 def fetch_unison(req: Req) -> Parsed:
-    payload = get_json("https://unison.betterlyrics.org/lyrics", req.query("song", "artist", "album", "duration"), 8)
+    payload = get_json(UNISON_URL, req.query("song", "artist", "album", "duration"), 8)
     data = (payload.get("data") if isinstance(payload, dict) else None) or {}
     body = data.get("lyrics") or ""
     if not body.strip():
@@ -619,7 +704,7 @@ def fetch_unison(req: Req) -> Parsed:
 
 
 def fetch_lyricsplus(req: Req) -> Parsed:
-    payload = get_json("https://lyricsplus.binimum.org/v2/lyrics/get", req.query("title", "artist", "album", "duration"), 4)
+    payload = get_json(LYRICSPLUS_URL, req.query("title", "artist", "album", "duration"), 4)
     if not isinstance(payload, dict) or not payload.get("lyrics"):
         raise Miss("no lyrics")
     return parse_lyricsplus(payload)
@@ -718,6 +803,11 @@ def fetch_kugou(req: Req) -> Parsed:
 
 LRCLIB_GET = "https://lrclib.net/api/get"
 LRCLIB_SEARCH = "https://lrclib.net/api/search"
+
+BETTERLYRICS_URL = "https://lyrics-api.boidu.dev/getLyrics"
+UNISON_URL = "https://unison.betterlyrics.org/lyrics"
+LYRICSPLUS_URL = "https://lyricsplus.binimum.org/v2/lyrics/get"
+WARM_URLS = (BETTERLYRICS_URL, UNISON_URL, LYRICSPLUS_URL, KUGOU_SONGS, KUGOU_SEARCH, LRCLIB_GET)
 
 
 def _lrclib_parse(rec: dict) -> Parsed:
@@ -924,12 +1014,13 @@ def _best(hits: dict[int, Parsed]) -> int | None:
 
 
 def _settled(i: int, level: str, pending: list[int], provs: list[Provider]) -> bool:
-    """True when nothing still out can beat hit i."""
+    """True when nothing still out is worth waiting for.
+    A word-level hit is shown at once: a higher-priority word result that lands later only upgrades the
+    cache for the next play. A line/plain hit waits (HOLD_SECONDS) for providers that could beat it."""
+    if level == "word":
+        return True
     for j in pending:
-        if level == "word":
-            if provs[j].word_capable and j < i:
-                return False
-        elif level == "line":
+        if level == "line":
             if provs[j].word_capable or j < i:
                 return False
         else:
