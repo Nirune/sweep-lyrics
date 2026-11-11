@@ -1907,6 +1907,82 @@ def _get_kakasi():
     return _KAKASI or None
 
 
+_ROM_OPEN = "([{「『（【〈《"
+_ROM_CLOSE = ")]}」』）】〉》、。,.!?！？:;…‥〜~"
+# Particles whose reading changes when spoken: は -> wa, を -> o, へ -> e.
+_ROM_PARTICLE = {"は": "wa", "へ": "e", "を": "o"}
+_ROM_PARTICLE_READING = {"は": "ha", "へ": "he", "を": "wo"}
+_KANA_ONLY = re.compile(r"^[\u3040-\u309f]+$")
+_KANJI_CH = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+# Kana that start an okurigana/conjugation ending after a kanji chunk.
+_MERGE_INITIALS = set("てるたれらせすまばそくけこずぬむぶぐういきしちっ")
+_MERGE_NOT = ("こと", "もの", "とき", "ため", "ところ", "よう", "ごと", "はず", "わけ")
+_NEGATION = ("ない", "なく", "なか", "なけ")
+
+
+def _merge_ok(kana):
+    """True when `kana` is an okurigana ending (超え+て, 生き+る)
+    rather than the start of a new word (夢+に, 見た+こと)."""
+    if not _KANA_ONLY.match(kana) or kana.startswith(_MERGE_NOT):
+        return False
+    return kana[0] in _MERGE_INITIALS or kana.startswith(_NEGATION)
+
+
+def _romanize_line(kks, line):
+    """pykakasi tokens -> one readable line: single spaces, no space
+    around punctuation, particles read as spoken, and okurigana glued
+    back onto its kanji (pykakasi splits 超えて into 超え + て)."""
+    tokens = []
+    for p in kks.convert(line):
+        orig, rom = p["orig"], p["hepburn"] or ""
+        if not orig.strip():
+            tokens.append((" ", " "))
+            continue
+        if not rom:
+            continue
+        if orig in _ROM_PARTICLE:
+            rom = _ROM_PARTICLE[orig]
+        elif len(orig) > 1 and _KANJI_CH.search(orig):
+            # pykakasi sometimes keeps the particle inside the token: 彼は -> kareha
+            last = orig[-1]
+            reading = _ROM_PARTICLE_READING.get(last)
+            if reading and rom.endswith(reading):
+                rom = rom[: -len(reading)] + " " + _ROM_PARTICLE[last]
+        tokens.append((orig, rom))
+
+    out = []
+    for orig, rom in tokens:
+        if orig == " ":
+            if out and out[-1][0] != " ":
+                out.append([" ", " "])
+            continue
+        prev = out[-1] if out else None
+        prev_word = bool(prev and prev[0] != " ")
+        if prev_word and _KANJI_CH.search(prev[1]):
+            # a particle that came glued to the next word: 涙はみせないの
+            if orig[0] in _ROM_PARTICLE and len(orig) > 1 and _KANA_ONLY.match(orig):
+                out.append([" ", " "])
+                out.append([_ROM_PARTICLE[orig[0]], orig[0]])
+                rest = _romanize_line(kks, orig[1:])
+                if rest:
+                    out.append([" ", " "])
+                    out.append([rest, orig])
+                continue
+            if _merge_ok(orig):
+                add = rom
+                # 笑っ + て: pykakasi spells the small っ as "tsu", so geminate
+                if prev[1].endswith("っ") and prev[0].endswith("tsu") and rom[0] in "tkps":
+                    add = rom[0] + rom
+                    prev[0] = prev[0][:-3]
+                prev[0] += add
+                prev[1] += orig
+                continue
+        if prev_word and prev[0][-1] not in _ROM_OPEN and rom[0] not in _ROM_CLOSE:
+            out.append([" ", " "])
+        out.append([rom, orig])
+    return re.sub(r"\s+", " ", "".join(t for t, _ in out)).strip()
+
+
 def romanize_lyrics(entries):
     """Converts every lyric line's kanji/hiragana/katakana into Hepburn
     romaji via pykakasi — purely local, no network round-trip, so
@@ -1927,8 +2003,7 @@ def romanize_lyrics(entries):
             if not line:
                 out.append("")
                 continue
-            parts = kks.convert(line)
-            out.append(" ".join(p["hepburn"] for p in parts).strip())
+            out.append(_romanize_line(kks, line))
         return out
     except Exception:
         return None
