@@ -130,7 +130,7 @@ class Parsed:
         timed = [ln for ln in ls if ln.timed]
         if len(timed) * 2 < len(ls):
             return "plain"
-        multi = sum(1 for ln in timed if len(ln.words) > 1)
+        multi = sum(1 for ln in timed if sum(len(w.syl) for w in ln.words) > 1)
         with_words = sum(1 for ln in timed if ln.words)
         if multi and with_words * 2 >= len(timed):
             return "word"
@@ -592,7 +592,13 @@ def parse_krc(text: str) -> Parsed:
             Unit(ls + int(w.group(1)) / 1000.0, ls + (int(w.group(1)) + int(w.group(2))) / 1000.0, html.unescape(w.group(3)))
             for w in _KRC_WORD.finditer(m.group(3))
         ]
-        ln = line_from_units(units, ls, ls + ll)
+        # The word offsets already give the exact line end (they match the header
+        # duration on every normal line). KuGou sometimes puts the whole song
+        # length in the last line's duration field instead — e.g. [200172,241686]
+        # on a 4:01 track — which would make finalize() reject an otherwise good
+        # word-level result as "lyrics run 442s, track is 240s".
+        end = max((u.end for u in units), default=0.0) or ls + ll
+        ln = line_from_units(units, ls, end)
         if ln:
             lines.append(ln)
     lines.sort(key=lambda ln: ln.start)
@@ -654,7 +660,7 @@ def to_lrc(parsed: Parsed, level: str) -> str:
     out: list[str] = []
     for ln in sorted((x for x in parsed.lines if x.text and x.timed), key=lambda x: x.start):
         head = f"[{stamp(ln.start)}]"
-        if level == "word" and len(ln.words) > 1:
+        if level == "word" and sum(len(w.syl) for w in ln.words) > 1:
             parts: list[str] = []
             for i, w in enumerate(ln.words):
                 nxt = ln.words[i + 1] if i + 1 < len(ln.words) else None
@@ -1121,6 +1127,36 @@ def _describe(kind: str, payload, dt: float) -> str:
     return f"{tag}: {payload} ({dt:.2f}s)"
 
 
+def _refresh(req: Req, provs: list[Provider], overall: float, current_level: str,
+             on_upgrade: Callable[[Result], None] | None = None) -> None:
+    """A cached line/plain result shouldn't hide a word-level one for the whole
+    TTL. Race the providers again in the background and upgrade the cache (plus
+    the live UI, when a callback is given) if something better lands."""
+    winner, hits, outcomes, out, t_end = race(req, provs, overall)
+    for i, p in enumerate(provs):
+        if i in outcomes:
+            log(f"{p.id}: refresh {_describe(*outcomes[i])}")
+    if len(outcomes) < len(provs):
+        threading.Thread(target=_late_finish,
+                         args=(req, provs, hits, outcomes, out, t_end, winner, True, on_upgrade),
+                         daemon=True).start()
+    if winner is None:
+        return
+    parsed = hits[winner]
+    level = parsed.level()
+    if RANK[level] <= RANK[current_level]:
+        return
+    res = Result(to_lrc(parsed, level), level, provs[winner].id,
+                 len([ln for ln in parsed.lines if ln.text]))
+    log(f"refresh winner: {res.source} {res.level} ({req.title} / {req.artist})")
+    cache_put(req, res)
+    if on_upgrade is not None:
+        try:
+            on_upgrade(res)
+        except Exception as e:  # a broken UI callback must never kill the listener
+            log(f"refresh winner: on_upgrade failed: {type(e).__name__}: {e}")
+
+
 def fetch(title, artist, album=None, duration=None, video_id=None, *, use_cache: bool = True,
           overall_timeout: float = OVERALL_TIMEOUT,
           on_upgrade: Callable[[Result], None] | None = None) -> Result | None:
@@ -1133,7 +1169,14 @@ def fetch(title, artist, album=None, duration=None, video_id=None, *, use_cache:
     if use_cache:
         cached = cache_get(req)
         if cached is not None:
-            return cached[1]
+            kind, res = cached
+            if kind == "hit" and res is not None and res.level != "word":
+                # Serve the line/plain hit now, but keep looking for word-level
+                # in the background: cache_get alone would block it for the TTL.
+                threading.Thread(target=_refresh,
+                                 args=(req, provs, overall_timeout, res.level, on_upgrade),
+                                 daemon=True).start()
+            return res
     winner, hits, outcomes, out, t_end = race(req, provs, overall_timeout)
     for i, p in enumerate(provs):
         if i in outcomes:
