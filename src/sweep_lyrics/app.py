@@ -2433,8 +2433,8 @@ _SETTINGS_CATEGORIES = [
         ("show_cover",           "Show cover art",           "bool",  True,  None, None, None),
         ("cover_size",           "Cover size",               "int",   1,    0,     2,    1),
         ("cover_shape",          "Cover shape",              "int",   1,    0,     2,    1),
-        ("cover_accent",         "Accent from cover art",    "bool",  False, None, None, None),
-        ("accent_fade",          "Accent fade (s)",          "float", 0.7,  0.0,   20.0, 0.25),
+        ("cover_accent",         "Accent from cover art",    "bool",  True, None, None, None),
+        ("accent_fade",          "Accent fade (s)",          "float", 1.0,  0.0,   20.0, 0.25),
     ]),
     ("per_word", "Per-word mode", [
         ("show_adlib",           "Show adlib",               "bool",  False, None, None, None),
@@ -2514,11 +2514,11 @@ def apply_settings(s):
     CONTEXT_LINES = int(s.get("context_lines", 3))
     _INTER_WORD_PAUSE = float(s.get("inter_word_pause", 0.45))
     POLL_INTERVAL = float(s.get("poll_interval", 0.02))
-    COVER_ACCENT_ENABLED = bool(s.get("cover_accent", False))
+    COVER_ACCENT_ENABLED = bool(s.get("cover_accent", True))
     try:
-        UI_ACCENT_FADE = max(0.0, float(s.get("accent_fade", 0.7)))
+        UI_ACCENT_FADE = max(0.0, float(s.get("accent_fade", 1.0)))
     except (TypeError, ValueError):
-        UI_ACCENT_FADE = 0.7
+        UI_ACCENT_FADE = 1.0
     COVER_ENABLED = COVER_AVAILABLE and bool(s.get("show_cover", True))
     INSTRUMENTAL_ENABLED = bool(s.get("show_instrumental", True))
     SHOW_ADLIB = bool(s.get("show_adlib", False))
