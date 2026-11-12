@@ -255,7 +255,10 @@ COVER_ROWS = 14        # terminal cells tall  (was 12)
 # _cover_rows() derives the real height from the terminal's cell aspect.
 COVER_SIZE_NAMES = ("small", "medium", "large")
 COVER_SIZE_DIMS = ((22, 11), (28, 14), (34, 17))
-COVER_CORNER_RADIUS = 0.06  # corner rounding as a fraction of the cover's side (0 = sharp)
+COVER_SHAPE_NAMES = ("square", "rounded", "circle")
+COVER_SHAPE_RADIUS = {"square": 0.0, "rounded": 0.06, "circle": 0.5}
+# Default shape if not set in config
+COVER_SHAPE = "rounded"
 COVER_MARGIN_LEFT = 2  # cells from the left edge
 COVER_MARGIN_TOP = 2   # fallback top when height unknown
 COVER_GUTTER = COVER_COLS + COVER_MARGIN_LEFT + 3  # total left offset given
@@ -2429,9 +2432,9 @@ _SETTINGS_CATEGORIES = [
     ("cover", "Cover", [
         ("show_cover",           "Show cover art",           "bool",  True,  None, None, None),
         ("cover_size",           "Cover size",               "int",   1,    0,     2,    1),
-        ("cover_radius",         "Corner radius",            "float", 0.06, 0.0,   0.5,  0.01),
+        ("cover_shape",          "Cover shape",              "int",   1,    0,     2,    1),
         ("cover_accent",         "Accent from cover art",    "bool",  False, None, None, None),
-        ("accent_fade",          "Accent fade (s)",          "float", 0.7,  0.0,   10.0, 0.25),
+        ("accent_fade",          "Accent fade (s)",          "float", 0.7,  0.0,   20.0, 0.25),
     ]),
     ("per_word", "Per-word mode", [
         ("show_adlib",           "Show adlib",               "bool",  False, None, None, None),
@@ -2520,7 +2523,10 @@ def apply_settings(s):
     INSTRUMENTAL_ENABLED = bool(s.get("show_instrumental", True))
     SHOW_ADLIB = bool(s.get("show_adlib", False))
     try:
-        COVER_CORNER_RADIUS = max(0.0, min(0.5, float(s.get("cover_radius", 0.06))))
+        # Prefer the explicit named shape if provided, else fall back to the raw radius
+        _shape_idx = int(s.get("cover_shape", 1))
+        _shape_name = COVER_SHAPE_NAMES[_shape_idx]
+        COVER_CORNER_RADIUS = COVER_SHAPE_RADIUS[_shape_name]
     except (TypeError, ValueError):
         COVER_CORNER_RADIUS = 0.06
     try:
@@ -2611,7 +2617,7 @@ def show_settings(live, settings):
     }
     menu_tips = {"advanced": "tuning knobs, safe to leave alone"}
     named = ("layout_mode", "word_size", "word_style", "word_gradient",
-             "cover_size", "panel_corners")
+             "cover_size", "cover_shape", "panel_corners")
 
     def _fmt(val, typ, key=None):
         if key == "cover_size":
@@ -2619,6 +2625,11 @@ def show_settings(live, settings):
                 return COVER_SIZE_NAMES[int(val)]
             except (TypeError, ValueError, IndexError):
                 return COVER_SIZE_NAMES[1]
+        if key == "cover_shape":
+            try:
+                return COVER_SHAPE_NAMES[int(val)]
+            except (TypeError, ValueError, IndexError):
+                return COVER_SHAPE_NAMES[1]
         if key == "panel_corners":
             try:
                 return PANEL_BOX_NAMES[int(val)]
@@ -5061,27 +5072,14 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             if cleaned:
                 current_line_text = cleaned
 
-        # The gap to the NEXT line's timestamp often includes instrumental
-        # breaks / held notes / silence before the next lyric starts — not
-        # just the time it takes to sing the current line. Blindly wiping
-        # across that whole gap makes the animation crawl on well after the
-        # vocal for this line has actually finished. Estimate a plausible
-        # sung-line duration from word count instead, and cap the wipe to
-        # whichever is shorter: that estimate, or the real gap (for short
-        # gaps where the estimate would overshoot into the next line).
-        #
-        # raw_span can be zero or even negative for some lrclib files —
-        # duplicate/near-duplicate timestamps on consecutive lines (backing
-        # vocals, ad-libs sharing a timestamp with the main line, etc.).
-        # That used to force wipe_span to 0, which meant frac stayed 0.0
-        # for that entire line's time on screen — the line just sat there
-        # plain white the whole time and never got a chance to wipe at
-        # all. Now a bad/missing raw_span is ignored rather than treated
-        # as "wipe instantly finishes" — the word-count estimate alone
-        # decides the duration, so every line always gets a real wipe.
+        # [FIX] Always use original text (with adlibs) for duration estimation,
+        # so wipe tracks properly even if adlibs are hidden on screen.
+        text_for_estimation = entries[idx][1] if idx >= 0 else ""
+        if romanize_enabled and romanized and 0 <= idx < len(romanized) and romanized[idx]:
+            text_for_estimation = romanized[idx]
+        
         raw_span = next_line_start - line_start
-        est_words = max(1, len((current_line_text or "").split()))
-        word_est_span = _estimate_line_seconds(current_line_text, song_sec_per_syllable)
+        word_est_span = _estimate_line_seconds(text_for_estimation, song_sec_per_syllable)
         wipe_span = min(raw_span, word_est_span) if raw_span > 0 else word_est_span
 
         frac = max(0.0, min(1.0, (sync_pos + _lead_for(sync_pos - line_start) - line_start) / wipe_span))
