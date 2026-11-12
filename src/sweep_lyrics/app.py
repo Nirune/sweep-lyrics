@@ -5400,7 +5400,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         else:
             bar.append(head, style="dim")
             filled = 1
-        bar.append("╌" * (bar_len - filled), style="dim")
+        bar.append("─" * (bar_len - filled), style="dim")
         pct = int(frac_bar * 100)
         progress = Text(justify="center")
         progress.append(f"{status_glyph}  ", style=ACCENT if playing else "dim")
