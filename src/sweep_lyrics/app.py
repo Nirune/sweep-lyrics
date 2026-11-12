@@ -38,6 +38,7 @@ import tempfile
 from pathlib import Path
 
 import requests
+from rich import box as rich_box
 from rich.live import Live
 from rich.panel import Panel
 from rich.align import Align
@@ -250,12 +251,22 @@ COVER_CACHE_DIR = CACHE_DIR / "covers"
 COVER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 COVER_COLS = 28        # terminal cells wide (was 24 — felt small/lost)
 COVER_ROWS = 14        # terminal cells tall  (was 12)
+# Named size presets: small / medium / large. Only cols are authoritative;
+# _cover_rows() derives the real height from the terminal's cell aspect.
+COVER_SIZE_NAMES = ("small", "medium", "large")
+COVER_SIZE_DIMS = ((22, 11), (28, 14), (34, 17))
 COVER_CORNER_RADIUS = 0.06  # corner rounding as a fraction of the cover's side (0 = sharp)
 COVER_MARGIN_LEFT = 2  # cells from the left edge
 COVER_MARGIN_TOP = 2   # fallback top when height unknown
 COVER_GUTTER = COVER_COLS + COVER_MARGIN_LEFT + 3  # total left offset given
                                                      # to the lyrics panel
                                                      # when a cover is shown
+# Panel border style: rounded / square / heavy / double. Applies to every
+# rich Panel (lyrics, settings, help, history, players, Shazam) except the
+# HUD layout, which draws its own corner brackets.
+PANEL_BOX_NAMES = ("rounded", "square", "heavy", "double")
+_PANEL_BOXES = (rich_box.ROUNDED, rich_box.SQUARE, rich_box.HEAVY, rich_box.DOUBLE)
+PANEL_BOX = _PANEL_BOXES[0]
 # How many text rows sit under the art (rule + title + artist + genre + badges).
 # Used to vertically balance the left column with the Kitty image.
 COVER_CAPTION_ROWS = 7
@@ -1431,7 +1442,10 @@ def _pick_cover_url(meta) -> str:
 
 
 def _cover_cache_path(art_url: str) -> Path:
-    key = hashlib.sha1(("v2|" + art_url).encode()).hexdigest()  # v2: bars trimmed
+    # v3: the corner radius is baked into the PNG, so it is part of the key —
+    # moving the radius slider re-fetches/re-bakes instead of serving the old
+    # rounding from cache (v2: bars trimmed).
+    key = hashlib.sha1(f"v3|{COVER_CORNER_RADIUS:.3f}|{art_url}".encode()).hexdigest()
     return COVER_CACHE_DIR / f"{key}.png"
 
 
@@ -1493,6 +1507,11 @@ def _round_corners(path: Path, radius_frac: float = None):
         from PIL import ImageDraw
         img = Image.open(path).convert("RGBA")
         w, h = img.size
+        if radius_frac <= 0:
+            # 0 means sharp: skip the mask entirely (max(2, ...) below would
+            # otherwise still clip a couple of pixels off each corner).
+            img.save(path, "PNG")
+            return
         r = max(2, int(min(w, h) * radius_frac))
         ss = 4
         mask = Image.new("L", (w * ss, h * ss), 0)
@@ -2069,6 +2088,7 @@ def show_shazam_history(live):
             Text("any key to return", style="dim italic", justify="center"),
         ),
         border_style=ACCENT,
+        box=PANEL_BOX,
         padding=(1, 4),
         width=56,
         title=" history ",
@@ -2189,6 +2209,7 @@ def show_player_menu(live, current=None, pinned=None):
                          style="dim italic", justify="center"),
                 ),
                 border_style=ACCENT,
+                box=PANEL_BOX,
                 padding=(1, 2),
                 width=84,
                 title=" players ",
@@ -2263,6 +2284,7 @@ def show_help(live, songrec_available=False):
             Text("any key to close", style="dim italic", justify="center"),
         ),
         border_style=ACCENT,
+        box=PANEL_BOX,
         padding=(1, 4),
         width=58,
         title=" keys ",
@@ -2401,10 +2423,15 @@ _SETTINGS_CATEGORIES = [
     ]),
     ("display", "Display", [
         ("context_lines",        "Context lines (min)",      "int",   3,    1,     9,    1),
+        ("show_instrumental",    "Show instrumental icon",   "bool",  True,  None, None, None),
+        ("panel_corners",        "Panel corners",            "int",   0,    0,     3,    1),
+    ]),
+    ("cover", "Cover", [
         ("show_cover",           "Show cover art",           "bool",  True,  None, None, None),
+        ("cover_size",           "Cover size",               "int",   1,    0,     2,    1),
+        ("cover_radius",         "Corner radius",            "float", 0.06, 0.0,   0.5,  0.01),
         ("cover_accent",         "Accent from cover art",    "bool",  False, None, None, None),
         ("accent_fade",          "Accent fade (s)",          "float", 0.7,  0.0,   10.0, 0.25),
-        ("show_instrumental",    "Show instrumental icon",   "bool",  True,  None, None, None),
     ]),
     ("per_word", "Per-word mode", [
         ("show_adlib",           "Show adlib",               "bool",  False, None, None, None),
@@ -2417,11 +2444,12 @@ _SETTINGS_SCHEMA = [item for _, _, items in _SETTINGS_CATEGORIES for item in ite
 # Menu tree for the settings panel (the schema above stays flat).
 # "advanced" is a group: it opens a submenu of the categories listed in
 # _SETTINGS_ADVANCED instead of an item list.
-_SETTINGS_TOP = ["layout", "display", "advanced"]
+_SETTINGS_TOP = ["layout", "display", "cover", "advanced"]
 _SETTINGS_ADVANCED = ["per_word", "karaoke", "onset", "sync"]
 _SETTINGS_BLURBS = {
     "layout": "mode and per-word look",
-    "display": "context lines, cover accent",
+    "display": "context lines, panel border",
+    "cover": "art size, corners, accent",
     "advanced": "wipe timing, onset, sync",
     "per_word": "adlib and backing vocal options",
     "karaoke": "wipe timing and easing",
@@ -2467,6 +2495,7 @@ def apply_settings(s):
     global INSTRUMENTAL_ENABLED
     global SHOW_ADLIB
     global UI_ACCENT_FADE
+    global COVER_CORNER_RADIUS, COVER_COLS, COVER_ROWS, COVER_GUTTER, PANEL_BOX
     KARAOKE_LEAD = float(s.get("karaoke_lead", 0.6))
     KARAOKE_HOLD_MAX = float(s.get("karaoke_hold_max", 3.0))
     KARAOKE_SECONDS_PER_WORD = float(s.get("karaoke_sec_per_word", 0.6))
@@ -2490,6 +2519,21 @@ def apply_settings(s):
     COVER_ENABLED = COVER_AVAILABLE and bool(s.get("show_cover", True))
     INSTRUMENTAL_ENABLED = bool(s.get("show_instrumental", True))
     SHOW_ADLIB = bool(s.get("show_adlib", False))
+    try:
+        COVER_CORNER_RADIUS = max(0.0, min(0.5, float(s.get("cover_radius", 0.06))))
+    except (TypeError, ValueError):
+        COVER_CORNER_RADIUS = 0.06
+    try:
+        _size = max(0, min(len(COVER_SIZE_DIMS) - 1, int(s.get("cover_size", 1))))
+    except (TypeError, ValueError):
+        _size = 1
+    COVER_COLS, COVER_ROWS = COVER_SIZE_DIMS[_size]
+    COVER_GUTTER = COVER_COLS + COVER_MARGIN_LEFT + 3
+    try:
+        _panel = max(0, min(len(_PANEL_BOXES) - 1, int(s.get("panel_corners", 0))))
+    except (TypeError, ValueError):
+        _panel = 0
+    PANEL_BOX = _PANEL_BOXES[_panel]
     try:
         LAYOUT_MODE = int(s.get("layout_mode", 0))
     except (TypeError, ValueError):
@@ -2531,7 +2575,7 @@ _INTER_WORD_PAUSE = 0.45
 def show_settings(live, settings):
     """Hierarchical settings panel.
 
-    top       Layout · Display · Advanced ›
+    top       Layout · Display · Cover · Advanced ›
     advanced  Karaoke / wipe · Onset hybrid · Sync
     items     ↑↓ select · ←→/space change · r reset · enter save · esc back
 
@@ -2549,6 +2593,9 @@ def show_settings(live, settings):
         "layout_mode": "classic · bait · timeline · hud · dock",
         "word_mode": "one word at a time, big + centered",
         "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
+        "cover_size": "small · medium · large",
+        "cover_radius": "0 = sharp corners, 0.5 = circle (re-bakes the cover on save)",
+        "panel_corners": "rounded / square / heavy / double — applies to every panel",
         "show_instrumental": "music icon during intro, long breaks and outro",
         "cover_accent": "tints borders, titles, progress bar and lyrics from the cover",
         "accent_fade": "how long the UI colour takes to settle on a new song (0 = instant)",
@@ -2563,9 +2610,20 @@ def show_settings(live, settings):
         "shazam_offset_fudge": "extra lag compensation after SongRec match",
     }
     menu_tips = {"advanced": "tuning knobs, safe to leave alone"}
-    named = ("layout_mode", "word_size", "word_style", "word_gradient")
+    named = ("layout_mode", "word_size", "word_style", "word_gradient",
+             "cover_size", "panel_corners")
 
     def _fmt(val, typ, key=None):
+        if key == "cover_size":
+            try:
+                return COVER_SIZE_NAMES[int(val)]
+            except (TypeError, ValueError, IndexError):
+                return COVER_SIZE_NAMES[1]
+        if key == "panel_corners":
+            try:
+                return PANEL_BOX_NAMES[int(val)]
+            except (TypeError, ValueError, IndexError):
+                return PANEL_BOX_NAMES[0]
         if key == "word_gradient":
             try:
                 return _WORD_GRAD_NAMES[int(val)]
@@ -2720,6 +2778,7 @@ def show_settings(live, settings):
                 status,
             ),
             border_style=ACCENT,
+            box=PANEL_BOX,
             padding=(1, 3),
             width=width,
             title=" Sweep Lyrics ",
@@ -5494,6 +5553,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     panel = Panel(
         centered,
         border_style=ACCENT,
+        box=PANEL_BOX,
         padding=(1, 3),
         width=panel_width,
         height=height,
@@ -5592,6 +5652,7 @@ def _do_shazam_listen(live, auto=False):
             Text(f"≤ {SHAZAM_LISTEN_TIMEOUT}s  ·  Ctrl+C cancel", style="dim", justify="center"),
         ),
         border_style=ACCENT,
+        box=PANEL_BOX,
         padding=(1, 4),
         width=42,
         title=" songrec ",
@@ -6900,7 +6961,11 @@ def main():
                         raise KeyboardInterrupt
                     elif ch in ("o", "O"):
                         # Settings panel — apply/save on Enter, discard on q/esc
+                        _prev_cover_radius = COVER_CORNER_RADIUS
                         show_settings(live, settings)
+                        # the radius is baked into the cached PNG, so a change
+                        # needs a fresh fetch/re-bake for the current track
+                        _rebake_cover = COVER_CORNER_RADIUS != _prev_cover_radius
                         # live.stop()/clear wipes Kitty's graphics layer, so
                         # re-place the cover art if we had one showing
                         # (dock layout puts it at the bottom)
@@ -6909,8 +6974,8 @@ def main():
                             cover_path = None
                             cover_offset = 0
                         else:
-                            if cover_path is None and last_cover_url:
-                                # switched back on: fetch art for the current track
+                            if last_cover_url and (cover_path is None or _rebake_cover):
+                                # switched back on / radius changed: fetch art for the current track
                                 cover_path = fetch_cover(last_cover_url)
                                 extract_cover_accent(cover_path)
                             if cover_path:
