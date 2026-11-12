@@ -101,10 +101,20 @@ Keys:
 
 Settings are saved between runs, so anything you toggle (including per-word mode) stays as you left it.
 
-## 📁 Files
+## 🗑️ Uninstall
 
-- Config: `~/.config/sweep-lyrics/lyrics-providers.json` (provider order and enabled sources)
-- Cache and state: `~/.cache/sweep-lyrics/`
+To remove the app:
+
+```bash
+pipx uninstall sweep-lyrics
+```
+
+To remove all cached data (lyrics history, Shazam results, etc.):
+
+```bash
+rm -rf ~/.cache/sweep-lyrics
+```
+
 
 ## ⚙️ Environment variables
 
