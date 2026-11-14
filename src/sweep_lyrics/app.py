@@ -232,7 +232,32 @@ OFFSET_CACHE_FILE = CACHE_DIR / "sync_offsets.json"
 # translate endpoint — best-effort only: if it ever changes shape or is
 # unreachable, translation just silently stays unavailable rather than
 # erroring out the whole app.
+# Languages offered in the settings menu (code, display name).
+# The index in this list is what translate_lang setting stores.
+TRANSLATE_LANGS = [
+    ("id", "Indonesian"),
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("zh-CN", "Chinese (Simp.)"),
+    ("zh-TW", "Chinese (Trad.)"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("pt", "Portuguese"),
+    ("ru", "Russian"),
+    ("ar", "Arabic"),
+    ("th", "Thai"),
+    ("vi", "Vietnamese"),
+    ("it", "Italian"),
+    ("nl", "Dutch"),
+    ("tr", "Turkish"),
+    ("hi", "Hindi"),
+]
+TRANSLATE_LANG_NAMES = tuple(name for _, name in TRANSLATE_LANGS)
 TRANSLATE_TARGET_LANG = "id"   # language code lyrics get translated INTO
+                                 # (overwritten by apply_settings from translate_lang)
+
 TRANSLATE_ENDPOINT = "https://translate.googleapis.com/translate_a/single"
 TRANSLATE_LINE_SEP = " \u241e "  # rare separator joining lines into one
                                # request, so line boundaries can be
@@ -2393,12 +2418,12 @@ SETTINGS_FILE = CACHE_DIR / "settings.json"
 # Hierarchical settings: categories → items
 # item tuple: (key, label, type, default, min, max, step)
 # type: "float" | "bool" | "int"
-# layout_mode is int 0..4 → classic / bait / timeline / hud / dock
-_LAYOUT_NAMES = ("classic", "bait", "timeline", "hud", "dock")
+# layout_mode is int 0..5 → classic / bait / timeline / hud / dock / split
+_LAYOUT_NAMES = ("classic", "bait", "timeline", "hud", "dock", "split")
 
 _SETTINGS_CATEGORIES = [
     ("layout", "Layout", [
-        ("layout_mode",          "Mode",                     "int",   0,    0,     4,    1),
+        ("layout_mode",          "Mode",                     "int",   0,    0,     5,    1),
         ("word_mode",            "Per-word mode",            "bool",  True,  None, None, None),
         ("word_size",            "Per-word size",            "int",   1,    0,     2,    1),
         ("word_style",           "Per-word style",           "int",   5,    0,     6,    1),
@@ -2428,6 +2453,7 @@ _SETTINGS_CATEGORIES = [
         ("context_lines",        "Context lines (min)",      "int",   3,    1,     9,    1),
         ("show_instrumental",    "Show instrumental icon",   "bool",  True,  None, None, None),
         ("panel_corners",        "Panel corners",            "int",   0,    0,     3,    1),
+        ("translate_lang",       "Translation language",     "int",   0,    0,     17,   1),
     ]),
     ("cover", "Cover", [
         ("show_cover",           "Show cover art",           "bool",  True,  None, None, None),
@@ -2499,6 +2525,7 @@ def apply_settings(s):
     global SHOW_ADLIB
     global UI_ACCENT_FADE
     global COVER_CORNER_RADIUS, COVER_COLS, COVER_ROWS, COVER_GUTTER, PANEL_BOX
+    global TRANSLATE_TARGET_LANG
     KARAOKE_LEAD = float(s.get("karaoke_lead", 0.6))
     KARAOKE_HOLD_MAX = float(s.get("karaoke_hold_max", 3.0))
     KARAOKE_SECONDS_PER_WORD = float(s.get("karaoke_sec_per_word", 0.6))
@@ -2544,7 +2571,7 @@ def apply_settings(s):
         LAYOUT_MODE = int(s.get("layout_mode", 0))
     except (TypeError, ValueError):
         LAYOUT_MODE = 0
-    LAYOUT_MODE = max(0, min(4, LAYOUT_MODE))
+    LAYOUT_MODE = max(0, min(5, LAYOUT_MODE))
     WORD_MODE = bool(s.get("word_mode", True))
     try:
         WORD_SIZE = max(0, min(2, int(s.get("word_size", 1))))
@@ -2558,9 +2585,14 @@ def apply_settings(s):
         WORD_STYLE = max(0, min(6, int(s.get("word_style", 5))))
     except (TypeError, ValueError):
         WORD_STYLE = 1
+    try:
+        _tl_idx = max(0, min(len(TRANSLATE_LANGS) - 1, int(s.get("translate_lang", 0))))
+    except (TypeError, ValueError):
+        _tl_idx = 0
+    TRANSLATE_TARGET_LANG = TRANSLATE_LANGS[_tl_idx][0]
 
 
-LAYOUT_MODE = 0  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock
+LAYOUT_MODE = 0  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock · 5 split
 WORD_GRADIENT = 3  # 0 off · 1 letter · 2 column · 3 wipe (per-word mode)
 WORD_STYLE = 5  # 0 dots · 1 solid · 2 text · 3 sextant · 4 scaled (OSC 66) · 5 image · 6 ascii
 WORD_SIZE = 1  # 0 small · 1 medium · 2 large (per-word mode)
@@ -2596,13 +2628,14 @@ def show_settings(live, settings):
     back_to = "top"
 
     tips = {
-        "layout_mode": "classic · bait · timeline · hud · dock",
+        "layout_mode": "classic · bait · timeline · hud · dock · split (split = side-by-side translation)",
         "word_mode": "one word at a time, big + centered",
         "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
         "cover_size": "small · medium · large",
         "cover_radius": "0 = sharp corners, 0.5 = circle (re-bakes the cover on save)",
         "panel_corners": "rounded / square / heavy / double — applies to every panel",
         "show_instrumental": "music icon during intro, long breaks and outro",
+        "translate_lang": "language lyrics get translated into (toggle 't' to show)",
         "cover_accent": "tints borders, titles, progress bar and lyrics from the cover",
         "accent_fade": "how long the UI colour takes to settle on a new song (0 = instant)",
         "show_adlib": "show words in parentheses (adlibs / backing vocals)",
@@ -2617,7 +2650,8 @@ def show_settings(live, settings):
     }
     menu_tips = {"advanced": "tuning knobs, safe to leave alone"}
     named = ("layout_mode", "word_size", "word_style", "word_gradient",
-             "cover_size", "cover_shape", "panel_corners")
+             "cover_size", "cover_shape", "panel_corners",
+             "translate_lang")
 
     def _fmt(val, typ, key=None):
         if key == "cover_size":
@@ -2650,6 +2684,11 @@ def show_settings(live, settings):
                 return _WORD_SIZE_NAMES[int(val)]
             except (TypeError, ValueError, IndexError):
                 return _WORD_SIZE_NAMES[1]
+        if key == "translate_lang":
+            try:
+                return TRANSLATE_LANG_NAMES[int(val)]
+            except (TypeError, ValueError, IndexError):
+                return TRANSLATE_LANG_NAMES[0]
         if key == "layout_mode":
             try:
                 return _LAYOUT_NAMES[int(val)]
@@ -4964,7 +5003,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     available = max(0, height - reserved)
     context_lines = max(CONTEXT_LINES, min(MAX_CONTEXT_LINES, available // 2))
     # layout tweaks
-    layout = LAYOUT_MODE  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock
+    layout = LAYOUT_MODE  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock · 5 split
     if ZEN_MODE or WORD_MODE:
         # mini mode — only the active line (and maybe one neighbor)
         context_lines = 0
@@ -5345,7 +5384,79 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                     body_lines.append(Text(line_text, style="rgb(70,70,85)"))
 
     hud_boxed = False
-    if layout == 2 and entries and not (ZEN_MODE or WORD_MODE):
+    split_view_active = (translate_enabled and layout == 5
+                         and not (ZEN_MODE or WORD_MODE)
+                         and translations and entries)
+    
+    if split_view_active:
+        # Split view: rebuild body as a two-column table (original | translation)
+        orig_lines = []
+        trans_lines = []
+        
+        for i in range(len(entries)):
+            _, line_text = entries[i]
+            if romanize_enabled and romanized and i < len(romanized) and romanized[i]:
+                line_text = romanized[i]
+            
+            if not (line_text or "").strip():
+                continue
+            
+            distance = abs(i - idx)
+            if layout == 3 and distance > 1:
+                continue
+            if i < start or i > end:
+                continue
+            
+            line_text = line_text or " "
+            trans_text = translations[i] if i < len(translations) and translations[i] else ""
+
+            if i == idx:
+                # Active line: karaoke wipe + accent bar on original, bold accent on translation
+                if karaoke_enabled:
+                    kl = karaoke_line(
+                        line_text, frac, active_accent_hex,
+                        word_timings=active_word_timings,
+                        sync_pos=sync_pos,
+                        line_end=(next_line_start
+                                  if next_line_start and next_line_start > line_start
+                                  else None),
+                    )
+                    o_t = Text()
+                    o_t.append("▌ ", style=active_accent_hex)
+                    o_t.append_text(kl if isinstance(kl, Text) else Text(str(kl)))
+                    orig_lines.append(o_t)
+                else:
+                    o_t = Text()
+                    o_t.append("▌ ", style=active_accent_hex)
+                    o_t.append(line_text, style=f"bold {active_accent_hex}")
+                    orig_lines.append(o_t)
+                trans_lines.append(Text(f"▌ {trans_text}", style=f"bold {active_accent_hex}") if trans_text else Text(""))
+            else:
+                distance = abs(i - idx)
+                if distance == 1:
+                    orig_lines.append(Text(line_text, style="white"))
+                    trans_lines.append(Text(trans_text, style="dim italic") if trans_text else Text(""))
+                elif distance == 2:
+                    orig_lines.append(Text(line_text, style="dim"))
+                    trans_lines.append(Text(trans_text, style="rgb(80,80,90) italic") if trans_text else Text(""))
+                else:
+                    orig_lines.append(Text(line_text, style="rgb(70,70,85)"))
+                    trans_lines.append(Text(trans_text, style="rgb(65,65,75) italic") if trans_text else Text(""))
+
+        if orig_lines:
+            max_len = max(len(orig_lines), len(trans_lines))
+            orig_lines.extend([Text("") for _ in range(max_len - len(orig_lines))])
+            trans_lines.extend([Text("") for _ in range(max_len - len(trans_lines))])
+
+            split_table = Table.grid(padding=(0, 4), expand=True)
+            split_table.add_column(ratio=1, justify="center")
+            split_table.add_column(ratio=1, justify="center")
+            for o, t in zip(orig_lines, trans_lines):
+                split_table.add_row(o, t)
+            
+            body_lines = [split_table]
+    
+    if layout == 2 and entries and not (ZEN_MODE or WORD_MODE) and not split_view_active:
         # timeline: lyrics left-aligned, one continuous vertical rail on
         # their left; the active line's segment is bold + accent
         tl = Table.grid(padding=0)
@@ -5359,7 +5470,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             else:
                 tl.add_row(Text("│ ", style=f"dim {ACCENT}"), t)
         body = Align.center(tl)
-    elif layout == 3 and entries and not (ZEN_MODE or WORD_MODE):
+    elif layout == 3 and entries and not (ZEN_MODE or WORD_MODE) and not split_view_active:
         # hud: the 3-line readout sits in corner brackets only
         from rich import box as _box
         hud_boxed = True
@@ -5382,7 +5493,11 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             box=_hud_box, border_style=ACCENT, padding=(0, 0), expand=False,
         ))
     else:
-        body = Group(*[Align.center(t) for t in body_lines])
+        # Split view doesn't need Align.center() — table maintains its own layout
+        if split_view_active:
+            body = Group(*body_lines)
+        else:
+            body = Group(*[Align.center(t) for t in body_lines])
 
     # ── progress (live head + pct chip) ───────────────────────────────
     playing = status == "Playing"
@@ -5961,6 +6076,7 @@ def smart_refetch_candidates(artist: str, title: str, duration: int, current_ent
 
 
 def main():
+    global ZEN_MODE
     console = Console()
     last_key = None
     pending_key = None       # a cur_key that differs from last_key but hasn't
@@ -6066,6 +6182,12 @@ def main():
     # a specific song's `entries` and gets lazily (re)fetched on 't' press.
     translate_enabled = False
     translations = None
+    # Split layout is translation-first: it cannot render its two columns
+    # without translated lines, so the first frame of a track in that
+    # layout fetches them automatically instead of waiting for a 't'
+    # press. Keyed by (artist, title, target language) so a failed fetch
+    # is only retried when the track or language actually changes.
+    auto_translate_key = None
 
     # Romanization of the current line (kanji/kana -> Latin script),
     # toggled with 'y'. Same split as translation: romanize_enabled is a
@@ -6692,6 +6814,21 @@ def main():
                     show_zoom_hint = IN_KITTY and shutil.which("kitty") is not None
                     # genre is cheap after the first lookup (in-memory cache)
                     current_genre = fetch_genre(artist, title) if (artist or title) else ""
+                    # Split layout needs translations just to draw its two
+                    # columns — enable/fetch them once per track, language
+                    # or layout change instead of making the user press 't'
+                    # first. 't' still toggles them off afterwards. Word
+                    # mode keeps translation opt-in since it stays inline.
+                    _want_key = (artist, title, TRANSLATE_TARGET_LANG, LAYOUT_MODE)
+                    if (LAYOUT_MODE == 5 and entries
+                            and not (ZEN_MODE or WORD_MODE)
+                            and auto_translate_key != _want_key):
+                        auto_translate_key = _want_key
+                        translate_enabled = True
+                        if translations is None:
+                            translations = fetch_translation(artist, title, entries)
+                            if translations is None:
+                                translate_enabled = False
                     frame = render_frame(
                         artist, title, entries, pos, duration,
                         cur_status or "Playing", size.width, size.height,
@@ -6762,7 +6899,6 @@ def main():
                         # guessing blind from a screenshot.
                         debug_karaoke = not debug_karaoke
                     elif ch in ("z", "Z"):
-                        global ZEN_MODE
                         ZEN_MODE = not ZEN_MODE
                     elif ch in ("m", "M"):
                         # Manual lyrics search — override auto-fetch result
@@ -6960,6 +7096,7 @@ def main():
                     elif ch in ("o", "O"):
                         # Settings panel — apply/save on Enter, discard on q/esc
                         _prev_cover_radius = COVER_CORNER_RADIUS
+                        _prev_translate_lang = TRANSLATE_TARGET_LANG
                         show_settings(live, settings)
                         # the radius is baked into the cached PNG, so a change
                         # needs a fresh fetch/re-bake for the current track
@@ -6982,6 +7119,10 @@ def main():
                         # if onset was just disabled, stop the capture process
                         if not ONSET_ENABLED and onset_tracker is not None:
                             onset_tracker.stop()
+                        # If translation language changed, drop the cached
+                        # translations so 't' re-fetches in the new language.
+                        if TRANSLATE_TARGET_LANG != _prev_translate_lang:
+                            translations = None
                         last_frame_time = time.time()
 
 
