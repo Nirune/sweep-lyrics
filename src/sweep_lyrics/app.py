@@ -538,12 +538,27 @@ def find_active_player(preferred=None):
     # login page, etc.) while a real player is Playing/Paused. Without this
     # they steal the view when the real player pauses, and the sticky lock
     # keeps them selected after it resumes.
+    #
+    # Browser noise = a pre-bridged browser MPRIS session
+    # (plasma-browser-integration, a bare brave/chromium/chrome instance)
+    # that carries no artist. Those are the claude.ai login page, an empty
+    # tab, etc. A real player (YT Music, Spotify, mpv, …) always has an
+    # artist when it actually plays. kdeconnect is a phone remote target,
+    # not a player, so it never wins the pick either.
     if AUTO_IGNORE_ARTISTLESS_BROWSER:
         _art = _player_artists()
         if _art:
-            _noise = {p for p in players
-                      if p.startswith("plasma-browser-integration")
-                      and p in _art and not _art[p]}
+            _noise = set()
+            for _pid in players:
+                _base = _pid.split(".")[0].replace("instance", "")
+                if _base.startswith("kdeconnect"):
+                    _noise.add(_pid)          # phone remote, never a player
+                    continue
+                if _pid in _art and _art[_pid]:
+                    continue  # has an artist → real player
+                if _base in ("plasma-browser-integration", "brave",
+                              "chromium", "chrome", "firefox"):
+                    _noise.add(_pid)
             if _noise and any(p not in _noise for p in playing + paused):
                 playing = [p for p in playing if p not in _noise]
                 paused = [p for p in paused if p not in _noise]
@@ -2300,9 +2315,19 @@ def _player_menu_rows():
             g["url"] = url
 
     rows = list(groups.values())
-    real = [r for r in rows if r["artist"] or r["url"]]
+    # A row is "real" when it carries an artist or a URL. Idle browser
+    # placeholders (plasma-browser-integration, brave.instance*, etc.) with
+    # neither get dropped when any real row exists.
+    _browser_prefixes = ("plasma-browser-integration", "brave.instance",
+                         "chromium.instance", "chrome.instance")
+    real = []
+    for r in rows:
+        if r["artist"] or r["url"]:
+            real.append(r)
+        elif not any(i.startswith(_browser_prefixes) for i in r["ids"]):
+            real.append(r)  # non-browser placeholder (mpv, etc.) — keep
     if real:
-        rows = real  # drop idle placeholders
+        rows = real
 
     for r in rows:
         domain = ""
