@@ -7495,6 +7495,11 @@ def main():
                         # "auto" clears the pin.
                         _pm_choice = show_player_menu(live, cur_player, find_active_player._pinned)
                         last_frame_time = time.time()
+                        # The player picker's live.stop()/console.clear() erased the
+                        # cover from the graphics layer; re-place it immediately so
+                        # it isn't left missing until the next resize (>=5 cells).
+                        if cover_path:
+                            show_cover(cover_path, term_height=console.size.height)
                         if _pm_choice:
                             _pm_kind, _pm_pid = _pm_choice
                             if _pm_kind == "auto":
