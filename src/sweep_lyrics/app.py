@@ -76,6 +76,73 @@ try:
 except Exception:
     HAVE_PROVIDERS = False
 
+# Switchable lyric styles (wipe / none / dot …) live in the `animations`
+# subpackage. Imported defensively: if it's missing the app falls back to its
+# built-in wipe instead of refusing to start.
+try:
+    from . import animations
+    HAVE_ANIMATIONS = True
+except Exception:
+    try:
+        import animations
+        HAVE_ANIMATIONS = True
+    except Exception:
+        animations = None
+        HAVE_ANIMATIONS = False
+
+# ── lyric animation selection ───────────────────────────────────────────
+# Only the *choice* lives here; each style owns its own drawing. Animation
+# names are ordered, and that order is also the runtime cycle order.
+ANIMATION_NAMES = animations.animation_names() if HAVE_ANIMATIONS else ("wipe",)
+# The active style is kept as its *name*, not an index: settings.json stays
+# readable and a change to the registry order can never silently re-map a
+# saved choice to a different style.
+ANIMATION = ANIMATION_NAMES[0] if ANIMATION_NAMES else "wipe"
+ANIMATION_LABELS = (
+    {n: animations.get_animation(n).label for n in ANIMATION_NAMES}
+    if HAVE_ANIMATIONS else {"wipe": "Karaoke wipe"}
+)
+_ANIMATION_INSTANCE = None
+
+
+def animation_instance():
+    """The active LyricAnimation (cached; rebuilt when the name changes)."""
+    global _ANIMATION_INSTANCE
+    if not HAVE_ANIMATIONS:
+        return None
+    if _ANIMATION_INSTANCE is None or _ANIMATION_INSTANCE.name != ANIMATION:
+        _ANIMATION_INSTANCE = animations.get_animation(ANIMATION)
+    return _ANIMATION_INSTANCE
+
+
+def set_animation(name):
+    """Select a style by name; unknown names fall back to the default."""
+    global ANIMATION, _ANIMATION_INSTANCE
+    if not HAVE_ANIMATIONS:
+        return ANIMATION
+    ANIMATION = animations.get_animation(name).name
+    _ANIMATION_INSTANCE = animations.get_animation(ANIMATION)
+    return ANIMATION
+
+
+def cycle_animation():
+    """Advance to the next style in registry order (wraps). Returns its name.
+
+    Kept as the programmatic way to step through styles (the settings panel
+    moves the same registry order with ←/→). The choice is written straight
+    back into ``SETTINGS`` — the dict the app loads and saves — so a later
+    ``o`` -> Enter can never re-apply a stale on-disk value over it.
+    """
+    if not HAVE_ANIMATIONS:
+        return ANIMATION
+    name = set_animation(animations.next_animation(ANIMATION))
+    try:
+        SETTINGS["animation"] = name
+    except Exception:
+        pass
+    return name
+
+
 LRCLIB_API = "https://lrclib.net/api"
 CACHE_DIR = Path.home() / ".cache" / "sweep-lyrics"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -673,6 +740,61 @@ class SmoothClock:
                 self.base_pos = est + err * self.GAIN
                 self.base_t = now
         self.last_raw, self.playing = raw, playing
+
+
+class InterpolatedClock:
+    """Locks the wipe to a fixed 30 fps by advancing linearly per frame.
+
+    SmoothClock interpolates MPRIS samples, but the output `pos` still jitters
+    based on wall-clock timing — uneven frame delivery (I/O delay, CPU load)
+    makes the wipe appear to speed up/slow down. This class takes SmoothClock's
+    position estimate and re-quantizes it to discrete 33.33ms frame intervals,
+    so every frame advances by exactly one tick no matter how much wall-clock
+    time has actually elapsed since the last render.
+
+    Motion is purely based on the frame count: if frame N has pos=10.5, frame
+    N+1 has pos=10.533, frame N+2 has pos=10.567, etc. Seek/pause/resume
+    events (big position jumps) snap to the new position.
+    """
+    FPS = 30
+    FRAME_DT = 1.0 / FPS
+
+    def __init__(self):
+        self.last_pos = 0.0
+        self.frame_count = 0
+
+    def next_frame(self, raw_pos, playing=True):
+        """Advance by one frame tick and return the interpolated position.
+
+        `raw_pos` is the current playback position from SmoothClock. If it's
+        far ahead (seek forward) or behind (seek backward, pause), snap to it;
+        otherwise advance linearly. Returns the position to render this frame.
+
+        While the player is paused, SmoothClock's estimate is frozen, so
+        advancing by a tick here would free-run the lyrics through the rest of
+        the song by itself — the "lyrics keep cycling while the music is
+        paused" bug. Freeze instead and re-anchor, so a resume continues from
+        exactly the displayed position.
+        """
+        if not playing:
+            self.last_pos = raw_pos
+            self.frame_count = 0
+            return raw_pos
+        delta = raw_pos - self.last_pos
+        if abs(delta) > 0.5 or delta < -0.05:  # seek or big skip
+            self.last_pos = raw_pos
+            self.frame_count = 1  # next frame will be +FRAME_DT
+            return raw_pos
+        # Normal playback: linear advance by frame_count intervals from last_pos
+        if self.frame_count == 0:
+            self.last_pos = raw_pos  # anchor on first call
+        quantized = self.last_pos + self.frame_count * self.FRAME_DT
+        self.frame_count += 1
+        return quantized
+
+    def reset(self):
+        self.last_pos = 0.0
+        self.frame_count = 0
 
 
 # ---------------------------------------------------------- title cleaning
@@ -2279,6 +2401,8 @@ def show_help(live, songrec_available=False):
         ("space", "play / pause"),
         ("+ / -", "zoom (kitty allow_remote_control)"),
         ("k", "karaoke wipe on / off"),
+        ("v", "cycle lyric animation" + (
+            f" ({ANIMATION})" if HAVE_ANIMATIONS else "")),
         ("d", "karaoke debug overlay"),
         (", / .", "seek -5s / +5s"),
         ("< / >", "seek -1s / +1s"),
@@ -2430,6 +2554,7 @@ _SETTINGS_CATEGORIES = [
         ("word_gradient",        "Per-word gradient",        "int",   3,    0,     3,    1),
     ]),
     ("karaoke", "Karaoke / wipe", [
+        ("animation",            "Lyric animation",          "int",   0,    0,     len(ANIMATION_NAMES) - 1, 1),
         ("karaoke_lead",         "Lead (s)",                 "float", 0.6,  0.0,   2.0,  0.05),
         ("karaoke_sec_per_word", "Sec per word (legacy, unused)", "float", 0.6,  0.2,   2.0,  0.05),
         ("karaoke_sec_per_syllable", "Sec per syllable (wipe cap)", "float", 0.22, 0.08,  0.6,  0.02),
@@ -2481,7 +2606,7 @@ _SETTINGS_BLURBS = {
     "cover": "art size, corners, accent",
     "advanced": "wipe timing, onset, sync",
     "per_word": "adlib and backing vocal options",
-    "karaoke": "wipe timing and easing",
+    "karaoke": "lyric style, wipe timing and easing",
     "onset": "audio onset snapping",
     "sync": "offset step, shazam lag",
 }
@@ -2528,6 +2653,11 @@ def apply_settings(s):
     global TRANSLATE_TARGET_LANG
     KARAOKE_LEAD = float(s.get("karaoke_lead", 0.6))
     KARAOKE_HOLD_MAX = float(s.get("karaoke_hold_max", 3.0))
+    try:
+        _anim_idx = int(s.get("animation", 0))
+    except (TypeError, ValueError):
+        _anim_idx = 0
+    set_animation(ANIMATION_NAMES[max(0, min(len(ANIMATION_NAMES) - 1, _anim_idx))])
     KARAOKE_SECONDS_PER_WORD = float(s.get("karaoke_sec_per_word", 0.6))
     KARAOKE_SECONDS_PER_SYLLABLE = float(s.get("karaoke_sec_per_syllable", 0.22))
     KARAOKE_EASE = float(s.get("karaoke_ease", 0.35))
@@ -2628,6 +2758,7 @@ def show_settings(live, settings):
     back_to = "top"
 
     tips = {
+        "animation": "lyric style (cycle live with 'v'): " + " / ".join(ANIMATION_NAMES),
         "layout_mode": "classic · bait · timeline · hud · dock · split (split = side-by-side translation)",
         "word_mode": "one word at a time, big + centered",
         "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
@@ -2651,9 +2782,14 @@ def show_settings(live, settings):
     menu_tips = {"advanced": "tuning knobs, safe to leave alone"}
     named = ("layout_mode", "word_size", "word_style", "word_gradient",
              "cover_size", "cover_shape", "panel_corners",
-             "translate_lang")
+             "translate_lang", "animation")
 
     def _fmt(val, typ, key=None):
+        if key == "animation":
+            try:
+                return ANIMATION_LABELS[ANIMATION_NAMES[int(val)]]
+            except (TypeError, ValueError, IndexError):
+                return ANIMATION_LABELS[ANIMATION_NAMES[0]]
         if key == "cover_size":
             try:
                 return COVER_SIZE_NAMES[int(val)]
@@ -4732,6 +4868,266 @@ def karaoke_line(text, frac, accent_hex, word_timings=None, sync_pos=None,
     return t
 
 
+# ---- lyric animation bridge ------------------------------------------------
+# One place assembles the per-frame AnimState; every style draws from it, so
+# wipe and any future animation can never drift apart in timing.
+
+def line_layout(text, spans):
+    """Expose how the active lyric row is laid out, in display cells.
+
+    Returns ``(line_cols, word_cols)``:
+
+    * ``line_cols`` — display width of ``text`` in terminal cells (wide
+      glyphs and emoji count as two columns, unlike ``len()``),
+    * ``word_cols`` — per span ``(start, end)`` display columns *inside*
+      ``text``.
+
+    This is the single source of truth for word positions. The renderer draws
+    the dot lane at exactly ``line_cols`` cells wide and prefixes it with the
+    same rail/padding as the lyric row, so a word column and a lane column
+    are the same column — animations never re-derive positions themselves.
+    """
+    line_cols = cell_len(text)
+    word_cols = tuple(
+        (cell_len(text[:sp.char_from]), cell_len(text[:sp.char_to]))
+        for sp in spans
+    )
+    return line_cols, word_cols
+
+
+# ---- dot debug logging (SWEEP_DEBUG=1) -------------------------------------
+DEBUG_DOT = os.environ.get("SWEEP_DEBUG") == "1"
+_DOT_LOG_PATH = Path.home() / ".cache" / "sweep-lyrics" / "dot-debug.log"
+_DOT_LOG_INTERVAL = 0.1  # seconds between entries
+_dot_log_last = 0.0
+
+
+def _dot_debug_log(state, *, lead_cols, view, timing_source, dot_col, dot_row):
+    """Append one dot-layout entry to ~/.cache/sweep-lyrics/dot-debug.log.
+
+    ``line_text_col``/``dot_screen_col`` are the absolute terminal columns of
+    the lyric text start and of the dot, and are only computed for the plain
+    centred view — where the offset is arithmetic. Other views (timeline rail,
+    hud box, split table) re-centre the row from their own container, so those
+    two fields are logged as ``-1`` and ``view=`` names the container instead.
+
+    ``dot_col``/``dot_row`` are the animation's own coordinates: display-cell
+    column inside the line and lane row (0 = top) inside the fixed-height lane.
+
+    Throttled to ~100 ms. Never raises: a debug log must not be able to take
+    the view down.
+    """
+    global _dot_log_last
+    now = time.time()
+    if now - _dot_log_last < _DOT_LOG_INTERVAL:
+        return
+    _dot_log_last = now
+    try:
+        active = state.active_word()
+        nxt = state.next_word()
+        cf, ct = state.cols_for(state.word_idx) if state.word_idx >= 0 else (0, 0)
+        if view == "centered":
+            # Panel: 1 border + 3 padding on each side; the body row is then
+            # Align.center()ed inside the panel's content width.
+            pad = max(0, (state.width - 8 - (lead_cols + state.line_cols)) // 2)
+            line_text_col = 4 + pad + lead_cols
+        else:
+            line_text_col = -1
+        screen = -1 if line_text_col < 0 else line_text_col + dot_col
+        _DOT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _DOT_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"pos={state.sync_pos:.3f} line={state.line_idx} "
+                f"line_start={state.line_start:.2f} line_end={state.line_end:.2f} "
+                f"word_idx={state.word_idx} word={(active.text if active else '')!r} "
+                f"onset={(f'{active.onset:.3f}' if active else '-')} "
+                f"next_onset={(f'{nxt.onset:.3f}' if nxt else '-')} "
+                f"timing={timing_source} view={view} "
+                f"line_text_col={line_text_col} lead_cols={lead_cols} "
+                f"line_cols={state.line_cols} word_cols=({cf},{ct}) "
+                f"term_width={state.width} dot_col={dot_col} "
+                f"dot_screen_col={screen} dot_lane_row={dot_row}\n"
+            )
+    except Exception:
+        pass
+
+
+def build_anim_state(*, pos, sync_pos, line_idx, line_text, line_start, line_end,
+                     wipe_span, frac, accent_hex, word_timings, width, height,
+                     sec_per_syllable=None):
+    """Pure: assemble the AnimState the active animation renders from.
+
+    Word spans come from the same Enhanced-LRC timings the wipe uses, with
+    this module's syllable estimator injected so the numbers match exactly.
+    A line whose words can't be matched (romanized / adlib-edited) yields no
+    spans — animations then fall back to line-level data instead of guessing.
+    """
+    spans = ()
+    if HAVE_ANIMATIONS:
+        spans = animations.resolve_word_spans(
+            line_text,
+            word_timings,
+            line_end if line_end > line_start else None,
+            syllable_fn=_estimate_syllables,
+            sec_per_syllable=(sec_per_syllable if sec_per_syllable is not None
+                              else KARAOKE_SECONDS_PER_SYLLABLE),
+            hold_max=KARAOKE_HOLD_MAX,
+        )
+
+    word_idx, word_progress = -1, 0.0
+    next_onset, time_to_next = None, 0.0
+    if spans:
+        cur = -1
+        for k, sp in enumerate(spans):
+            if sync_pos >= sp.onset:
+                cur = k
+            else:
+                break
+        word_idx = cur
+        if cur >= 0:
+            sp = spans[cur]
+            if sp.duration > 0:
+                word_progress = max(0.0, min(1.0, (sync_pos - sp.onset) / sp.duration))
+            if cur + 1 < len(spans):
+                next_onset = spans[cur + 1].onset
+                time_to_next = next_onset - sync_pos
+        else:
+            # line hasn't reached its first word yet — the dot needs to know
+            # where/when it should land), so expose that look-ahead too.
+            next_onset = spans[0].onset
+            time_to_next = next_onset - sync_pos
+
+    line_cols, word_cols = line_layout(line_text, spans)
+
+    return animations.AnimState(
+        pos=pos, sync_pos=sync_pos, line_idx=line_idx, line_text=line_text,
+        line_start=line_start, line_end=line_end, wipe_span=wipe_span,
+        frac=frac, accent_hex=accent_hex, words=spans,
+        word_timings=word_timings, word_idx=word_idx, word_progress=word_progress,
+        next_onset=next_onset, time_to_next=time_to_next,
+        width=width, height=height, line_cols=line_cols, word_cols=word_cols,
+    )
+
+
+def animated_line(text, frac, accent_hex, word_timings, sync_pos, line_start,
+                  line_end, *, pos, line_idx, width, height, wipe_span=0.0,
+                  sec_per_syllable=None, lead_cols=0, view="centered"):
+    """Render the active line with the selected animation.
+
+    Returns ``(line, above_rows)`` where `above_rows` are extra rows to draw
+    directly above it (the dot lane). ``lead_cols`` is the number of display
+    cells the caller puts in front of the lyric text on that row (the rail
+    marker) and ``view`` names the container that centres the row; both are
+    only used by the SWEEP_DEBUG=1 dot log.
+
+    Degrades to the built-in wipe when the animations package is unavailable,
+    so behaviour never depends on it.
+    """
+    anim = animation_instance()
+    if anim is None:
+        kl = karaoke_line(
+            text, frac, accent_hex, word_timings=word_timings,
+            sync_pos=sync_pos,
+            line_end=(line_end if line_end and line_end > line_start else None),
+        )
+        return (kl if isinstance(kl, Text) else Text(str(kl))), []
+
+    state = build_anim_state(
+        pos=pos, sync_pos=sync_pos, line_idx=line_idx, line_text=text,
+        line_start=line_start, line_end=line_end if line_end else line_start,
+        wipe_span=wipe_span, frac=frac, accent_hex=accent_hex,
+        word_timings=word_timings, width=width, height=height,
+        sec_per_syllable=sec_per_syllable,
+    )
+    if DEBUG_DOT and getattr(anim, "name", "") == "dot":
+        _pos_fn = getattr(anim, "position", None)
+        if _pos_fn is not None:
+            try:
+                _dc, _dr = _pos_fn(state)
+            except Exception:
+                _dc, _dr = -1, -1
+            _dot_debug_log(
+                state, lead_cols=lead_cols, view=view,
+                timing_source=("enhanced-lrc" if word_timings else "none"),
+                dot_col=_dc, dot_row=_dr,
+            )
+    try:
+        frame = anim.render(state)
+    except Exception:
+        # A third-party style must never take the whole view down with it.
+        kl = karaoke_line(
+            text, frac, accent_hex, word_timings=word_timings,
+            sync_pos=sync_pos,
+            line_end=(line_end if line_end and line_end > line_start else None),
+        )
+        return (kl if isinstance(kl, Text) else Text(str(kl))), []
+    line = frame.line if isinstance(frame.line, Text) else Text(str(frame.line))
+    return line, list(frame.above)
+
+
+def _anim_lane_rows(height=None):
+    """Rows the active style draws above the lyric line.
+
+    Uses the style's own ``lane_rows_for(height)`` when it has one (the dot
+    shrinks from 2 to 1 row on a very short terminal), otherwise the static
+    ``extra_rows_above``. The layout uses this to stop the *centred* views
+    (zen, bait and the dock's centred variants) from sliding when the user
+    cycles styles: the lane rows are already part of the body, so centring is
+    computed as if they were absent and the body is then lifted by exactly this
+    height. Styles that draw nothing above the line (wipe/none) report zero,
+    which leaves the default view bit-for-bit unchanged. Per-word mode also
+    reports zero: it draws the big word instead of calling ``animated_line()``,
+    so no lane is on screen there.
+
+    The top-anchored views (classic, timeline, hud, split, dock) start the lyric
+    body directly under the header, so there a lane style really does move the
+    lyric down by this many rows — reserving the rows for every style would move
+    the default wipe output, which the refactor must not do.
+    """
+    anim = animation_instance()
+    if WORD_MODE:
+        # Per-word mode draws the big word instead of calling animated_line(),
+        # so no lane is ever rendered there. Reserving one would shift the word
+        # up whenever the user cycles to a lane style.
+        return 0
+    if not anim:
+        return 0
+    fn = getattr(anim, "lane_rows_for", None)
+    if fn is not None:
+        try:
+            return max(0, int(fn(height)))
+        except Exception:
+            pass
+    return max(0, int(getattr(anim, "extra_rows_above", 0) or 0))
+
+
+def _anim_view(layout, *, split=False):
+    """Container that centres the lyric row; names what the dot lanes line up
+    with. Only the plain centred layouts let the debug log work out an absolute
+    screen column, so the others are reported by name instead."""
+    if split or layout == 5:
+        return "split"
+    if layout in (0, 1):  # classic, bait: row is Align.center()ed in the panel
+        return "centered"
+    return _LAYOUT_NAMES[layout] if layout < len(_LAYOUT_NAMES) else "centered"
+
+
+def _lane_row(row, prefix=""):
+    """Indent a lane row so it lines up under the lyric.
+
+    The classic/split layouts put a two-column ``"▌ "`` rail in front of the
+    active line; rows drawn above it need the same offset or the lane looks
+    shifted left.
+    """
+    row = row if isinstance(row, Text) else Text(str(row))
+    if not prefix:
+        return row
+    out = Text()
+    out.append(prefix)
+    out.append_text(row)
+    return out
+
+
 def _line_sung_end(entries, word_timings, k, duration, sps):
     """When line k stops being sung: last word's end, else the same
     estimate the karaoke wipe uses (capped at the next row)."""
@@ -4755,53 +5151,93 @@ def _smoothstep(x):
     return x * x * (3.0 - 2.0 * x)
 
 
-def _render_apple_dots(gap_info, accent_hex):
-    """Apple Music style 3-dot countdown for instrumental gaps.
+# ── interlude dot ────────────────────────────────────────────────────────
+# Intro, breaks and the outro show a single dot that hops inside a lane of
+# FIXED height, so the rows around it can never move while it jumps. The hop
+# is sampled from the song clock (``sync_pos``) on every render tick: smooth at
+# the normal poll rate (~50 fps) and frozen with the music while paused.
+# When the ``dot`` lyric animation is active the lane matches that style's own
+# lane height (2 rows, 1 on very short terminals) instead of the default 3, so
+# entering or leaving an interlude does not change the block height.
+INTERLUDE_DOT_GLYPH = "●"   # U+25CF; swap for "⬤" (U+2B24) if you want it
+                            # fatter, but some fonts draw that one double-width,
+                            # which would shift the whole row.
+INTERLUDE_LANE_ROWS = 3     # fixed lane height in terminal rows (>= 3)
+INTERLUDE_HOP_ROWS = 2      # hop peak, in rows (keep <= INTERLUDE_LANE_ROWS - 1)
+INTERLUDE_HOP_HZ = 0.9      # hops per second: abs(sin(t * pi * hz))
+# Empty lane rows must still render as one row (an empty Text renders zero
+# rows and would collapse the lane) and must not be whitespace (rich's centred
+# table cell rstrips whitespace and would shift the row). U+2800 is an
+# invisible braille cell: one column wide, not whitespace.
+INTERLUDE_LANE_BLANK = "\u2800"
 
-    The row is symmetric (7 columns) so Align.center puts it on the same
-    centre line as the icon. Do not pad it on one side: a leading pad
-    shifts the visible dots right by pad/2 columns.
 
-    Each dot has a continuous intensity 0..1 and its colour is blended
-    colourless -> accent (same plain accent as the per-word position dots,
-    no bold), so it fades instead of switching:
-      intro / break: dot i fades in over the second before the old
-                     "lit" threshold (rem <= 3-i), all lit at rem <= 1.
-      outro:         all lit, then dots fade out right to left (dot 2 by
-                     rem 6, dot 1 by rem 3, dot 0 at the very end).
+def interlude_hop_phase(t, hz=INTERLUDE_HOP_HZ):
+    """Hop curve 0..1 at time ``t``: 0 at the bottom, 1 at the peak.
+
+    abs(sin) gives a smooth parabola-like rise/fall and one full hop every
+    ``1 / hz`` seconds. Pure, so it can be tested without a terminal.
     """
-    rem = gap_info.get("rem", 0.0)
-    is_outro = gap_info.get("is_outro", False)
+    return abs(math.sin(t * math.pi * hz))
 
-    dot_char = "●"
-    sep = "  "
+
+def interlude_dot_row(t, lane=INTERLUDE_LANE_ROWS, hz=INTERLUDE_HOP_HZ,
+                      peak=INTERLUDE_HOP_ROWS):
+    """Lane row (0 = top) the dot sits on at time ``t``.
+
+    The offset is rounded to whole terminal rows, so the dot lands on glyph
+    rows instead of between them, and it is clamped inside the lane.
+    """
+    off = int(round(interlude_hop_phase(t, hz) * peak))
+    return lane - 1 - max(0, min(lane - 1, off))
+
+
+def _interlude_lane_rows(available=None):
+    """Lane rows for the interlude dot.
+
+    Follows the active lyric animation's own lane height when it has one (the
+    ``dot`` style: 2 rows, or 1 on a short terminal). Falling back to
+    ``INTERLUDE_LANE_ROWS`` keeps the standalone indicator unchanged for the
+    other styles.
+    """
+    anim = animation_instance()
+    fn = getattr(anim, "lane_rows_for", None)
+    if fn is not None:
+        try:
+            rows = int(fn(available))
+        except Exception:
+            rows = 0
+        if rows > 0:
+            return rows
+    return INTERLUDE_LANE_ROWS
+
+
+def _interlude_lane(accent_hex, t=None, lane_rows=None):
+    """The interlude dot as a fixed-height block of rows (top -> bottom).
+
+    Brightness follows the hop phase (truecolor blend of grey -> accent), so
+    the dot breathes: dim at the bottom of the jump, bright at the peak. Falls
+    back to plain accent / dim white when truecolor isn't available.
+    """
+    t = time.monotonic() if t is None else t
+    lane = INTERLUDE_LANE_ROWS if lane_rows is None else max(1, int(lane_rows))
+    peak = min(INTERLUDE_HOP_ROWS, lane - 1)
+    phase = interlude_hop_phase(t)
 
     try:
         acc = _hex_to_rgb(accent_hex)
     except Exception:
         acc = None
+    if acc is None:
+        style = accent_hex if phase >= 0.5 else "dim white"
+    else:
+        r, g, b = _lerp_rgb(_DOT_OFF_RGB, acc, 0.30 + 0.70 * _smoothstep(phase))
+        style = f"#{r:02x}{g:02x}{b:02x}"
 
-    parts = []
-    for i in range(3):
-        if is_outro:
-            lvl = (rem - (3.0 * i)) / 1.5   # 1 -> fully lit, 0 -> colourless
-        else:
-            lvl = 4.0 - i - rem             # fade in during the last seconds
-        lvl = _smoothstep(lvl)
-        if acc is None:
-            style = accent_hex if lvl >= 0.5 else "dim white"
-        else:
-            r, g, b = _lerp_rgb(_DOT_OFF_RGB, acc, lvl)
-            style = f"#{r:02x}{g:02x}{b:02x}"
-        parts.append((dot_char, style))
-
-    t = Text(justify="center")
-    for i, (ch, style) in enumerate(parts):
-        if i > 0:
-            t.append(sep)
-        t.append(ch, style=style)
-
-    return t
+    row = interlude_dot_row(t, lane=lane, peak=max(0, peak))
+    rows = [Text(INTERLUDE_LANE_BLANK) for _ in range(lane)]
+    rows[row] = Text(INTERLUDE_DOT_GLYPH, style=style, justify="center")
+    return rows
 
 
 def _instrumental_gap(entries, word_timings, idx, sync_pos, duration, sps):
@@ -4852,17 +5288,27 @@ def _instrumental_gap(entries, word_timings, idx, sync_pos, duration, sps):
     }
 
 
-def _instrumental_rows(accent_hex, panel_width, available, gap_info=None):
-    """Lines for the instrumental icon and Apple Music dots countdown."""
+def _instrumental_rows(accent_hex, panel_width, available, gap_info=None,
+                       t=None):
+    """Lines for the instrumental icon and the interlude dot lane.
+
+    ``t`` is the song clock the hop is sampled from. Passing ``sync_pos``
+    freezes the dot with the music while the player is paused; leaving it
+    ``None`` keeps the wall-clock fallback for direct/unit-test calls.
+    """
     plain = Text(INSTRUMENTAL_ICON, style="bold white", justify="center")
+    lane = _interlude_lane(accent_hex, t=t,
+                           lane_rows=_interlude_lane_rows(available)) \
+        if gap_info else []
     if not WORD_MODE:
-        dots_line = _render_apple_dots(gap_info, accent_hex) if gap_info else None
-        return [plain, dots_line] if dots_line else [plain]
+        return [plain, *lane] if lane else [plain]
     try:
         w = INSTRUMENTAL_WORD_GLYPH
         eff_style = _effective_word_style(WORD_STYLE)
         sz_idx = max(0, min(2, WORD_SIZE))
-        max_cw, max_ch = max(10, panel_width - 8), max(3, available - 2)
+        # Reserve the lane's rows so the glyph + dot always fit inside
+        # ``available`` on short terminals.
+        max_cw, max_ch = max(10, panel_width - 8), max(3, available - 2 - len(lane))
         rows = None
         img_cols = None  # actual rendered width in terminal columns (image mode)
         if eff_style in (0, 1, 3, 6):
@@ -4894,21 +5340,51 @@ def _instrumental_rows(accent_hex, panel_width, available, gap_info=None):
                 ent = _WORD_IMG_CACHE.get(key)
                 img_cols = ent["cols"] if ent else None
         if not rows:
-            dots_line = _render_apple_dots(gap_info, accent_hex) if gap_info else None
-            return [plain, dots_line] if dots_line else [plain]
-        dots_line = _render_apple_dots(gap_info, accent_hex) if gap_info else None
+            return [plain, *lane] if lane else [plain]
         res = [Text(""), *rows]
-        if dots_line:
-            res.append(dots_line)
+        res.extend(lane)
         res.append(Text(""))
         return res
     except Exception:
-        dots_line = _render_apple_dots(gap_info, accent_hex) if gap_info else None
-        return [plain, dots_line] if dots_line else [plain]
+        return [plain, *lane] if lane else [plain]
 
 
 def _instrumental_text(accent_hex):
     return Text(INSTRUMENTAL_ICON, style="bold white", justify="center")
+
+
+def _sync_output_wrap(live, frame):
+    """Wrap frame update with terminal sync mode to avoid mid-render flicker.
+
+    Kitty's synchronized output mode (DEC 2026) tells the terminal to buffer
+    updates instead of displaying them character-by-character, eliminating
+    visible redraws mid-frame on high-latency connections or when the app
+    lags. Safe on terminals that don't support it (they ignore the escape).
+
+    The markers must go to the console's *real* file, not ``sys.stdout``:
+    inside ``Live`` stdout is a ``FileProxy`` whose ``write()`` buffers until a
+    newline and then re-prints the text through the console, which appends a
+    newline at the bottom row of the alt screen. That scrolled the screen by a
+    row per marker, and Kitty anchors image placements (the cover art) to
+    screen rows, so the art drifted upward frame after frame.
+    """
+    stream = getattr(live.console, "file", None) or sys.stdout
+    try:
+        # Begin synchronized update
+        stream.write("\x1b[?2026h")
+        stream.flush()
+    except Exception:
+        stream = None
+    try:
+        live.update(frame, refresh=True)
+    finally:
+        if stream is not None:
+            try:
+                # End synchronized update
+                stream.write("\x1b[?2026l")
+                stream.flush()
+            except Exception:
+                pass
 
 
 def _bait_bounds(entries, idx, max_lines=8):
@@ -5241,7 +5717,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
 
         if in_gap and idx < 0:
             body_lines.append(Text(""))
-            body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap))
+            body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap, sync_pos))
             body_lines.append(Text(""))
 
         for i in range(start, end + 1):
@@ -5252,14 +5728,14 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             # stray underline/bar artifacts under the real lyric
             if not (line_text or "").strip():
                 if in_gap and i == idx:
-                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap))
+                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap, sync_pos))
                 continue
             line_text = line_text or " "
             if i == idx:
                 if i > start and layout != 3:
                     body_lines.append(Text(""))
                 if in_gap:
-                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap))
+                    body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap, sync_pos))
                 elif WORD_MODE:
                     lt = current_line_text if (WORD_MODE and not SHOW_ADLIB) else line_text
                     cw = _current_word(
@@ -5335,22 +5811,32 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                                             style=active_accent_hex if d == wk else "dim")
                             body_lines.append(dots)
                 elif karaoke_enabled:
-                    kl = karaoke_line(
+                    kl, _above = animated_line(
                         line_text, frac, active_accent_hex,
-                        word_timings=active_word_timings,
-                        sync_pos=sync_pos,
-                        line_end=(next_line_start
-                                  if next_line_start and next_line_start > line_start
-                                  else None),
+                        active_word_timings, sync_pos, line_start,
+                        next_line_start,
+                        pos=pos, line_idx=idx,
+                        width=panel_width, height=available,
+                        wipe_span=wipe_span,
+                        lead_cols=(2 if layout == 0 else 0),
+                        view=_anim_view(layout),
                     )
+                    kl = kl if isinstance(kl, Text) else Text(str(kl))
+                    # Lane rows (e.g. the bouncing dot's track) go directly
+                    # above the active line; the count is fixed per style so
+                    # cycling animations never shifts the layout. The lane is
+                    # drawn as wide as the lyric row and gets the same rail
+                    # prefix, so its columns line up with the lyric's.
+                    for _row in _above:
+                        body_lines.append(
+                            _lane_row(_row, "  " if layout == 0 else ""))
                     if layout == 2:  # timeline — rail is drawn when body is assembled
-                        kl = kl if isinstance(kl, Text) else Text(str(kl))
                         timeline_active.add(id(kl))
                         body_lines.append(kl)
                     elif layout == 0:  # classic — accent block in front of the active line
                         rail = Text()
                         rail.append("▌ ", style=active_accent_hex)
-                        rail.append_text(kl if isinstance(kl, Text) else Text(str(kl)))
+                        rail.append_text(kl)
                         body_lines.append(rail)
                     else:
                         body_lines.append(kl)
@@ -5413,17 +5899,23 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             if i == idx:
                 # Active line: karaoke wipe + accent bar on original, bold accent on translation
                 if karaoke_enabled:
-                    kl = karaoke_line(
+                    kl, _above = animated_line(
                         line_text, frac, active_accent_hex,
-                        word_timings=active_word_timings,
-                        sync_pos=sync_pos,
-                        line_end=(next_line_start
-                                  if next_line_start and next_line_start > line_start
-                                  else None),
+                        active_word_timings, sync_pos, line_start,
+                        next_line_start,
+                        pos=pos, line_idx=idx,
+                        width=panel_width, height=available,
+                        wipe_span=wipe_span, lead_cols=2, view="split",
                     )
+                    kl = kl if isinstance(kl, Text) else Text(str(kl))
+                    # Keep the two columns row-aligned: every lane row added
+                    # to the original side gets an empty counterpart.
+                    for _row in _above:
+                        orig_lines.append(_lane_row(_row, "  "))
+                        trans_lines.append(Text(""))
                     o_t = Text()
                     o_t.append("▌ ", style=active_accent_hex)
-                    o_t.append_text(kl if isinstance(kl, Text) else Text(str(kl)))
+                    o_t.append_text(kl)
                     orig_lines.append(o_t)
                 else:
                     o_t = Text()
@@ -5536,6 +6028,8 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     row1 = ["? help"]
     if abs(sync_offset) > 0.001:
         row1.append(f"sync:{sync_offset:+.2f}s")
+    if HAVE_ANIMATIONS and ANIMATION != animations.DEFAULT_ANIMATION:
+        row1.append(f"anim:{ANIMATION}")
     if shazam_active:
         row1.append("b exit id")
     row2 = []
@@ -5574,11 +6068,18 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         body_h = max(1, sum(1 for t in body_lines if not (isinstance(t, Text) and not t.plain)))
         dock_h = len(dock_parts)
         free = max(1, usable - body_h - dock_h)
+        # The active style's lane rows are already part of body_h. Centring is
+        # therefore computed as if they were not there and then lifted by
+        # exactly the lane height, which parks the lyric line on the same row
+        # whichever style is active. Styles with no lane (wipe/none) reserve
+        # zero, so their layout is bit-for-bit what it was before.
+        lane_rows = _anim_lane_rows(available)
+        body_vis = max(1, body_h - lane_rows)
 
         if ZEN_MODE or WORD_MODE:
-            above = free // 2
+            above = max(0, (free + lane_rows) // 2 - lane_rows)
             below = free - above
-            want_above = (usable - body_h) // 2
+            want_above = (usable - body_vis) // 2 - lane_rows
             if want_above >= 0 and free - want_above >= 0:
                 above = want_above
                 below = free - above
@@ -5633,17 +6134,26 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             body_h += 2  # bracket rows
         header_h = len(header_parts)
         footer_h = len(footer_parts)
-        free = max(1, usable - header_h - body_h - footer_h)
+        # See the dock branch: the lane rows sit inside body_h, so the lyric is
+        # parked by lifting the centred body by exactly the lane height.
+        lane_rows = _anim_lane_rows(available)
+        body_vis = max(1, body_h - lane_rows)
+        # The split view is a single Table, which the row count above sees as
+        # one row while it actually renders several; the lane rows inside it are
+        # therefore not reflected in body_h and must be taken out of the free
+        # space explicitly, or they push the footer off the bottom of the panel.
+        uncounted_lane = lane_rows if split_view_active else 0
+        free = max(1, usable - header_h - body_h - footer_h - uncounted_lane)
 
         bait_sub = layout == 1 and bool(entries) and not (ZEN_MODE or WORD_MODE)
         if ZEN_MODE or WORD_MODE or bait_sub:
             # split free space above/below so the lyric sits vertically
             # centered between the (empty) top and the footer
-            above = free // 2
+            above = max(0, (free + lane_rows) // 2 - lane_rows)
             below = free - above
             # center on the PANEL, not just on the leftover space between
             # a tall header and a short footer; fall back if it won't fit
-            want_above = (usable - body_h) // 2 - header_h
+            want_above = (usable - body_vis) // 2 - header_h - lane_rows
             # bait: center in the visible empty area, not on the whole panel
             # (the footer eats the bottom rows, so panel-centering looks low)
             if not bait_sub and want_above >= 0 and free - want_above >= 0:
@@ -6335,6 +6845,7 @@ def main():
                 last_full_check = time.time()
                 last_frame_time = time.time()
                 pos_clock = SmoothClock()
+                interpolated_clock = InterpolatedClock()
                 pos_clock_player = None
                 last_pos_poll = 0.0
                 last_status_poll = 0.0
@@ -6417,7 +6928,7 @@ def main():
                         song_sec_per_syllable = None
                         shazam_auto_fail_streak = 2
 
-                last_cover_size = console.size
+                last_cover_size = (console.size.width, console.size.height)
 
                 while True:
                     now = time.time()
@@ -6738,6 +7249,7 @@ def main():
                         if cur_player != pos_clock_player:
                             pos_clock_player = cur_player
                             pos_clock.reset()
+                            interpolated_clock.reset()
                             last_pos_poll = 0.0
                         if _mono - last_pos_poll >= POS_POLL_INTERVAL:
                             last_pos_poll = _mono
@@ -6753,6 +7265,10 @@ def main():
                                 pos_clock.base_t = _mono
                                 pos_clock.playing = _pl
                         pos = pos_clock.now_pos()
+                    # Quantize to 30 fps for smooth wipe motion. A paused
+                    # player gets the frozen raw position back, never a tick.
+                    pos = interpolated_clock.next_frame(
+                        pos, playing=(cur_status == "Playing"))
 
                     # Lightweight onset tracker: lazy-start + non-blocking poll
                     if onset_tracker is not None and karaoke_enabled and ONSET_ENABLED:
@@ -6803,14 +7319,17 @@ def main():
                         _VOCAL_INTENSITY = 0.0
 
                     size = console.size
-                    if cover_path and size != last_cover_size:
-                        # Window resized (or font zoomed) — the image was
-                        # placed for the old cell geometry, so it now reads
-                        # as shifted/warped. Clear + re-place it for Kitty
-                        # to recompute against the current grid.
-                        clear_cover()
-                        show_cover(cover_path, term_height=size.height)
-                    last_cover_size = size
+                    size_tuple = (size.width, size.height)
+                    # Only re-place cover on significant terminal resize (≥5 cells)
+                    # to avoid Kitty flicker from repaint jitter. Initial placement
+                    # happens once when cover_path is set.
+                    if cover_path and size_tuple != last_cover_size:
+                        delta_w = abs(size.width - last_cover_size[0])
+                        delta_h = abs(size.height - last_cover_size[1])
+                        if delta_w >= 5 or delta_h >= 5:
+                            clear_cover()
+                            show_cover(cover_path, term_height=size.height)
+                    last_cover_size = size_tuple
                     show_zoom_hint = IN_KITTY and shutil.which("kitty") is not None
                     # genre is cheap after the first lookup (in-memory cache)
                     current_genre = fetch_genre(artist, title) if (artist or title) else ""
@@ -6856,7 +7375,7 @@ def main():
                         source_player=cur_player,
                         genre=current_genre,
                     )
-                    live.update(frame, refresh=True)
+                    _sync_output_wrap(live, frame)
 
                     heal_kitty_zoom(zoom_steps)
                     ch = poll_key(POLL_INTERVAL)
@@ -6979,6 +7498,7 @@ def main():
                         # Drop the interpolated clock so the next poll
                         # hard-snaps to the new position (no wipe lag).
                         pos_clock.reset()
+                        interpolated_clock.reset()
                         last_pos_poll = 0.0
                     elif ch == "[":
                         # Lyrics running ahead of the vocal — pull sync
@@ -7016,6 +7536,9 @@ def main():
                         romanize_enabled = not romanize_enabled
                         if romanize_enabled and romanized is None:
                             romanized = romanize_lyrics(entries)
+                    elif ch in ("v", "V"):
+                        # Cycle the lyric style (settings also exposes it).
+                        cycle_animation()
                     elif ch in ("?", "/"):
                         # Like the history panel this blocks while open and
                         # deliberately does NOT reset last_frame_time, so
