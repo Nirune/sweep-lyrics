@@ -99,6 +99,21 @@ Keys:
 - `?` or `/` show all key bindings
 - `q` quit
 
+### Lyric Animations
+
+Sweep Lyrics supports switchable lyric animations:
+
+| Animation | Description |
+|-----------|-------------|
+| `wipe` | Classic left-to-right karaoke wipe (default) |
+| `dot` | One `●` that rests just above the sung word and arcs up in a fixed 2-row lane before each jump (1 row on very short terminals) |
+| `bounce` | The sung word itself hops up into a 1-row lane above the lyric line and lands back down as the word is held |
+| `none` | Static highlight, no animation |
+
+**Environment variable**: Set `SWEEP_ANIMATION=wipe`, `SWEEP_ANIMATION=dot`, `SWEEP_ANIMATION=bounce`, or `SWEEP_ANIMATION=none` before running.
+
+**Settings**: Open settings (`o`) → **Lyric animation** → "Lyric style", then `←`/`→` to change it. The choice is saved as its name (`"bounce"`, not an index), so it persists between runs. The active style also shows in the footer (e.g., `anim:dot`) when it isn't the default.
+
 Settings are saved between runs, so anything you toggle (including per-word mode) stays as you left it.
 
 ## 🗑️ Uninstall
@@ -118,6 +133,7 @@ rm -rf ~/.cache/sweep-lyrics
 
 ## ⚙️ Environment variables
 
+- `SWEEP_ANIMATION`: Lyric animation style (`wipe`, `dot`, `bounce`, `none`). Defaults to `wipe`. Invalid values fall back to default.
 - `SWEEP_SHAZAM_DEVICE`: audio source used for Shazam and sync. Defaults to the monitor of your current default sink (via `pactl`); set it if you want a specific one, e.g. `SWEEP_SHAZAM_DEVICE=alsa_output.xyz.monitor`
 - `SWEEP_IMG_SMOOTH`
 - `SWEEP_SMOOTH`

@@ -103,6 +103,9 @@ ANIMATION_LABELS = (
     if HAVE_ANIMATIONS else {"wipe": "Karaoke wipe"}
 )
 _ANIMATION_INSTANCE = None
+# The live settings dict (set by main()). Kept in sync whenever the chosen
+# style changes, so the next settings open never starts from a stale value.
+SETTINGS = {}
 
 
 def animation_instance():
@@ -116,12 +119,20 @@ def animation_instance():
 
 
 def set_animation(name):
-    """Select a style by name; unknown names fall back to the default."""
+    """Select a style by name; unknown names fall back to the default.
+
+    Also records the choice in ``SETTINGS`` so the settings panel starts from
+    what is actually in effect (see ``cycle_animation``).
+    """
     global ANIMATION, _ANIMATION_INSTANCE
     if not HAVE_ANIMATIONS:
         return ANIMATION
     ANIMATION = animations.get_animation(name).name
     _ANIMATION_INSTANCE = animations.get_animation(ANIMATION)
+    try:
+        SETTINGS["animation"] = ANIMATION
+    except Exception:
+        pass
     return ANIMATION
 
 
@@ -2401,8 +2412,6 @@ def show_help(live, songrec_available=False):
         ("space", "play / pause"),
         ("+ / -", "zoom (kitty allow_remote_control)"),
         ("k", "karaoke wipe on / off"),
-        ("v", "cycle lyric animation" + (
-            f" ({ANIMATION})" if HAVE_ANIMATIONS else "")),
         ("d", "karaoke debug overlay"),
         (", / .", "seek -5s / +5s"),
         ("< / >", "seek -1s / +1s"),
@@ -2553,8 +2562,10 @@ _SETTINGS_CATEGORIES = [
         ("word_style",           "Per-word style",           "int",   5,    0,     6,    1),
         ("word_gradient",        "Per-word gradient",        "int",   3,    0,     3,    1),
     ]),
+    ("animation", "Lyric animation", [
+        ("animation",            "Lyric style",              "str",   "wipe", None, None, None),
+    ]),
     ("karaoke", "Karaoke / wipe", [
-        ("animation",            "Lyric animation",          "int",   0,    0,     len(ANIMATION_NAMES) - 1, 1),
         ("karaoke_lead",         "Lead (s)",                 "float", 0.6,  0.0,   2.0,  0.05),
         ("karaoke_sec_per_word", "Sec per word (legacy, unused)", "float", 0.6,  0.2,   2.0,  0.05),
         ("karaoke_sec_per_syllable", "Sec per syllable (wipe cap)", "float", 0.22, 0.08,  0.6,  0.02),
@@ -2598,15 +2609,16 @@ _SETTINGS_SCHEMA = [item for _, _, items in _SETTINGS_CATEGORIES for item in ite
 # Menu tree for the settings panel (the schema above stays flat).
 # "advanced" is a group: it opens a submenu of the categories listed in
 # _SETTINGS_ADVANCED instead of an item list.
-_SETTINGS_TOP = ["layout", "display", "cover", "advanced"]
+_SETTINGS_TOP = ["layout", "animation", "display", "cover", "advanced"]
 _SETTINGS_ADVANCED = ["per_word", "karaoke", "onset", "sync"]
 _SETTINGS_BLURBS = {
     "layout": "mode and per-word look",
+    "animation": "lyric style (wipe / dot / bounce / none)",
     "display": "context lines, panel border",
     "cover": "art size, corners, accent",
     "advanced": "wipe timing, onset, sync",
     "per_word": "adlib and backing vocal options",
-    "karaoke": "lyric style, wipe timing and easing",
+    "karaoke": "wipe timing and easing",
     "onset": "audio onset snapping",
     "sync": "offset step, shazam lag",
 }
@@ -2628,6 +2640,17 @@ def load_settings():
                         s[k] = data[k]
         except Exception:
             pass
+    # Migrate the old integer animation index (pre-name settings) to a name,
+    # so an existing settings.json picks the style it actually meant.
+    try:
+        idx = s.get("animation", "wipe")
+        if isinstance(idx, bool) or not isinstance(idx, str):
+            s["animation"] = ANIMATION_NAMES[
+                max(0, min(len(ANIMATION_NAMES) - 1, int(idx)))]
+    except (TypeError, ValueError):
+        s["animation"] = ANIMATION_NAMES[0]
+    if s.get("animation") not in ANIMATION_NAMES:
+        s["animation"] = ANIMATION_NAMES[0]
     return s
 
 
@@ -2653,11 +2676,16 @@ def apply_settings(s):
     global TRANSLATE_TARGET_LANG
     KARAOKE_LEAD = float(s.get("karaoke_lead", 0.6))
     KARAOKE_HOLD_MAX = float(s.get("karaoke_hold_max", 3.0))
-    try:
-        _anim_idx = int(s.get("animation", 0))
-    except (TypeError, ValueError):
-        _anim_idx = 0
-    set_animation(ANIMATION_NAMES[max(0, min(len(ANIMATION_NAMES) - 1, _anim_idx))])
+    # SWEEP_ANIMATION wins over the saved choice for this run only; it is
+    # honoured here so any later apply_settings() call cannot silently drop
+    # it. An invalid value is ignored rather than written back to disk.
+    _env_anim = ""
+    if HAVE_ANIMATIONS:
+        _env_anim = os.environ.get(animations.ENV_VAR, "").strip().lower()
+    if _env_anim in ANIMATION_NAMES:
+        set_animation(_env_anim)
+    else:
+        set_animation(s.get("animation", ANIMATION_NAMES[0]))
     KARAOKE_SECONDS_PER_WORD = float(s.get("karaoke_sec_per_word", 0.6))
     KARAOKE_SECONDS_PER_SYLLABLE = float(s.get("karaoke_sec_per_syllable", 0.22))
     KARAOKE_EASE = float(s.get("karaoke_ease", 0.35))
@@ -2752,13 +2780,16 @@ def show_settings(live, settings):
     live.stop()
     console = Console()
     draft = dict(settings)
+    # The panel's starting point must be the style actually in effect.
+    if "animation" in draft:
+        draft["animation"] = ANIMATION
     level = "top"  # top | adv | items
     cursor = {"top": 0, "adv": 0, "items": 0}
     cat_key = None
     back_to = "top"
 
     tips = {
-        "animation": "lyric style (cycle live with 'v'): " + " / ".join(ANIMATION_NAMES),
+        "animation": "lyric style — " + " / ".join(ANIMATION_NAMES),
         "layout_mode": "classic · bait · timeline · hud · dock · split (split = side-by-side translation)",
         "word_mode": "one word at a time, big + centered",
         "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
@@ -2786,10 +2817,8 @@ def show_settings(live, settings):
 
     def _fmt(val, typ, key=None):
         if key == "animation":
-            try:
-                return ANIMATION_LABELS[ANIMATION_NAMES[int(val)]]
-            except (TypeError, ValueError, IndexError):
-                return ANIMATION_LABELS[ANIMATION_NAMES[0]]
+            # name -> its human label; the stored value stays the registry key
+            return ANIMATION_LABELS.get(str(val), str(val))
         if key == "cover_size":
             try:
                 return COVER_SIZE_NAMES[int(val)]
@@ -2884,11 +2913,16 @@ def show_settings(live, settings):
         return t
 
     def _items_table(items):
+        # The lyric-style value ("Bouncing dot", "Word bounce"…) is wider than
+        # the usual 13-char value column, so it gets ellipsised. Give the
+        # table a wider value column on rows that carry it.
+        wide_value = any(key == "animation" for key, *_ in items)
+        value_w = 17 if wide_value else 13
         t = Table.grid(expand=True, padding=(0, 1))
         t.add_column(width=1)
         t.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
         t.add_column(width=12)
-        t.add_column(width=13, justify="right", no_wrap=True)
+        t.add_column(width=value_w, justify="right", no_wrap=True)
         cur = cursor["items"]
         for i, item in enumerate(items):
             key, label, typ, default, lo, hi, step = item
@@ -2978,6 +3012,15 @@ def show_settings(live, settings):
         key, label, typ, default, lo, hi, step = item
         if typ == "bool":
             draft[key] = not draft[key]
+            return
+        if typ == "str":
+            # Cyclic choice (the lyric style): step through the registry order.
+            names = ANIMATION_NAMES
+            try:
+                cur = names.index(str(draft.get(key)))
+            except ValueError:
+                cur = 0
+            draft[key] = names[(cur + direction) % len(names)]
             return
         delta = step if direction > 0 else -step
         if typ == "int":
@@ -6710,6 +6753,11 @@ def main():
     # carrying over from whatever song played before it.
     offset_cache = load_offset_cache()
     settings = load_settings()
+    # Expose the live settings dict so set_animation()/cycle_animation() can
+    # persist the chosen style; without it the next 'o' -> Enter would
+    # re-apply the stale on-disk value and undo the change.
+    global SETTINGS
+    SETTINGS = settings
     apply_settings(settings)
     zoom_steps = restore_kitty_zoom(load_zoom_steps())
     global_offset = 0.0
@@ -7565,9 +7613,6 @@ def main():
                         romanize_enabled = not romanize_enabled
                         if romanize_enabled and romanized is None:
                             romanized = romanize_lyrics(entries)
-                    elif ch in ("v", "V"):
-                        # Cycle the lyric style (settings also exposes it).
-                        cycle_animation()
                     elif ch in ("?", "/"):
                         # Like the history panel this blocks while open and
                         # deliberately does NOT reset last_frame_time, so

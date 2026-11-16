@@ -429,6 +429,151 @@ class TestLineLayout(unittest.TestCase):
         self.assertEqual(app.line_layout("", ()), (0, ()))
 
 
+class TestAnimationSettings(unittest.TestCase):
+    """The lyric style lives in settings and survives the settings panel.
+
+    Regression: 'v' cycled the style but wrote only the module global, so
+    opening settings and pressing Enter re-applied the stale on-disk value and
+    silently undid the cycle.
+    """
+
+    def setUp(self):
+        from sweep_lyrics import app
+        self.app = app
+        self._anim = app.ANIMATION
+        self._settings = dict(app.SETTINGS)
+
+    def tearDown(self):
+        self.app.ANIMATION = self._anim
+        self.app.animation_instance()
+        self.app.SETTINGS.clear()
+        self.app.SETTINGS.update(self._settings)
+
+    def test_v_is_no_longer_a_keybinding(self):
+        # 'v' was removed: the style is picked in settings now.
+        import io
+        from contextlib import redirect_stdout
+        src = __import__("inspect").getsource(self.app.show_help)
+        self.assertNotIn('("v",', src)
+
+    def test_animation_has_its_own_category(self):
+        # Not buried under "Karaoke / wipe" any more.
+        keys = [k for k, _l, _items in self.app._SETTINGS_CATEGORIES]
+        self.assertIn("animation", keys)
+        items = dict((i[0], i) for i in self.app._SETTINGS_BY_KEY["animation"][1])
+        self.assertIn("animation", items)
+        self.assertEqual(items["animation"][2], "str")  # stored as a name
+        self.assertEqual(items["animation"][3], "wipe")
+
+    def test_animation_is_top_level_menu_entry(self):
+        self.assertIn("animation", self.app._SETTINGS_TOP)
+        self.assertNotIn("animation", self.app._SETTINGS_ADVANCED)
+
+    def test_default_settings_animation_is_a_valid_name(self):
+        s = self.app._default_settings()
+        self.assertIn(s["animation"], self.app.ANIMATION_NAMES)
+
+    def test_cycle_writes_the_settings_dict(self):
+        # The whole point: 'v' must persist the choice where 'o' -> Enter reads.
+        self.app.SETTINGS["animation"] = self.app.ANIMATION
+        before = self.app.SETTINGS["animation"]
+        self.app.cycle_animation()
+        self.assertEqual(self.app.SETTINGS["animation"], self.app.ANIMATION)
+        self.assertNotEqual(self.app.SETTINGS["animation"], before)
+
+    def test_apply_settings_reads_the_name(self):
+        for name in self.app.ANIMATION_NAMES:
+            self.app.apply_settings({"animation": name})
+            self.assertEqual(self.app.ANIMATION, name)
+            self.assertEqual(self.app.animation_instance().name, name)
+
+    def test_unknown_name_falls_back_to_default(self):
+        self.app.apply_settings({"animation": "does-not-exist"})
+        self.assertEqual(self.app.ANIMATION, self.app.ANIMATION_NAMES[0])
+
+    def test_legacy_integer_index_migrates(self):
+        # settings.json written before the name change stored an int index.
+        import json
+        import tempfile
+        from pathlib import Path
+        real = self.app.SETTINGS_FILE
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                self.app.SETTINGS_FILE = Path(d) / "settings.json"
+                self.app.SETTINGS_FILE.write_text(json.dumps({"animation": 1}))
+                loaded = self.app.load_settings()
+                self.assertEqual(loaded["animation"], self.app.ANIMATION_NAMES[1])
+                # ...and it is now the name, not an index.
+                self.assertIsInstance(loaded["animation"], str)
+        finally:
+            self.app.SETTINGS_FILE = real
+
+    def test_garbage_animation_value_falls_back(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        real = self.app.SETTINGS_FILE
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                self.app.SETTINGS_FILE = Path(d) / "settings.json"
+                self.app.SETTINGS_FILE.write_text(json.dumps({"animation": "bogus"}))
+                self.assertEqual(self.app.load_settings()["animation"],
+                                 self.app.ANIMATION_NAMES[0])
+        finally:
+            self.app.SETTINGS_FILE = real
+
+    def test_labels_cover_every_name(self):
+        for name in self.app.ANIMATION_NAMES:
+            self.assertIn(name, self.app.ANIMATION_LABELS)
+            self.assertTrue(self.app.ANIMATION_LABELS[name])
+
+    def test_labels_fit_the_settings_value_column(self):
+        # "‹ Bouncing dot ›" must fit the wider value column (17), or the
+        # settings row truncates it to "Bouncing d…".
+        for name in self.app.ANIMATION_NAMES:
+            label = self.app.ANIMATION_LABELS[name]
+            self.assertLessEqual(len(label) + 4, 17, f"{label!r} too wide")
+
+    def test_set_animation_records_the_choice(self):
+        self.app.SETTINGS.clear()
+        self.app.set_animation("dot")
+        self.assertEqual(self.app.SETTINGS["animation"], "dot")
+
+    def test_env_override_wins_and_survives_a_reapply(self):
+        # SWEEP_ANIMATION is for a single run (no disk write) and must not be
+        # dropped by a later apply_settings() — e.g. after the settings panel.
+        import os
+        key = self.app.animations.ENV_VAR
+        old = os.environ.get(key)
+        try:
+            os.environ[key] = "bounce"
+            s = {"animation": "wipe"}
+            self.app.apply_settings(s)
+            self.assertEqual(self.app.ANIMATION, "bounce")
+            self.app.apply_settings(s)          # called again later
+            self.assertEqual(self.app.ANIMATION, "bounce")
+        finally:
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+        self.app.apply_settings({"animation": "wipe"})
+
+    def test_invalid_env_override_falls_back_to_the_saved_choice(self):
+        import os
+        key = self.app.animations.ENV_VAR
+        old = os.environ.get(key)
+        try:
+            os.environ[key] = "not-a-style"
+            self.app.apply_settings({"animation": "dot"})
+            self.assertEqual(self.app.ANIMATION, "dot")
+        finally:
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+
+
 class TestAnimLaneRows(unittest.TestCase):
     """The layout reserves the lane rows the active style actually draws."""
 
