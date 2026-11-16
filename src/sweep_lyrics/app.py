@@ -4570,10 +4570,24 @@ def _kitty_send_png(img_id, png, cols, rows):
 
 _IMG_SMOOTH = os.environ.get("SWEEP_IMG_SMOOTH", "1") != "0"
 _IMG_WIPE_FEATHER_CH = 0.8   # soft edge width, in cell heights
-_IMG_WIPE_STEP_PX = 2        # edge quantisation; every new step is one PNG sent to kitty
+# Edge quantisation in pixels: the finer the step, the more PNGs are encoded
+# and transmitted to kitty per second. 2px looked smooth at the old ~15 fps
+# poll rate but at 30 fps it floods the terminal (flicker + CPU). 8px steps
+# halve the transmit rate while the feathered edge still glides smoothly.
+_IMG_WIPE_STEP_PX = 8
 _IMG_WIPE_MAX_FRAMES = 120   # PNGs kept per word
 _IMG_WIPE_MAX_WORDS = 8
 _WORD_SMOOTH_CACHE = {}
+# Per-frame hand-off: the word image wipe parks its next PNG here and the
+# frame's synchronized-output block sends it (see _sync_output_wrap).
+_PENDING_PNG = [None]
+
+
+def _pending_png_and_clear():
+    """Take the parked word-wipe PNG (or None) and reset the slot."""
+    png = _PENDING_PNG[0]
+    _PENDING_PNG[0] = None
+    return png
 
 
 def _wipe_frame_png(rest, lit, edge, feather):
@@ -4654,7 +4668,13 @@ def _word_image_rows_smooth(word, rgb, max_w, max_h, size_idx, p):
                 ent["frames"][q] = png
             if q != ent["cur"]:
                 ent["flip"] ^= 1
-            _kitty_send_png(ent["ids"][ent["flip"]], png, ent["cols"], ent["rows"])
+            # Deferred: the caller transmits this inside the frame's
+            # synchronized-output block (``_sync_output_wrap``), so the new
+            # placeholder position and the image arrive in one atomic update.
+            # Sending it here, before ``live.update``, let the placeholders
+            # reach the screen while the image was still in flight — a visible
+            # blank cell on every wipe step.
+            _PENDING_PNG[0] = (ent["ids"][ent["flip"]], png, ent["cols"], ent["rows"])
             ent["cur"] = q
         return list(ent["lines"][ent["flip"]])
     except Exception:
@@ -5353,7 +5373,7 @@ def _instrumental_text(accent_hex):
     return Text(INSTRUMENTAL_ICON, style="bold white", justify="center")
 
 
-def _sync_output_wrap(live, frame):
+def _sync_output_wrap(live, frame, pending_png=None):
     """Wrap frame update with terminal sync mode to avoid mid-render flicker.
 
     Kitty's synchronized output mode (DEC 2026) tells the terminal to buffer
@@ -5367,6 +5387,13 @@ def _sync_output_wrap(live, frame):
     newline at the bottom row of the alt screen. That scrolled the screen by a
     row per marker, and Kitty anchors image placements (the cover art) to
     screen rows, so the art drifted upward frame after frame.
+
+    ``pending_png`` (the per-word image wipe, see
+    ``_word_image_rows_smooth``) is transmitted *inside* the sync block,
+    just before ``live.update``: the placeholders that appear in the frame
+    only point at an image once kitty has received both in one atomic
+    update, so the double-buffer flip can never show a placeholder for an
+    image that hasn't arrived.
     """
     stream = getattr(live.console, "file", None) or sys.stdout
     try:
@@ -5376,6 +5403,8 @@ def _sync_output_wrap(live, frame):
     except Exception:
         stream = None
     try:
+        if pending_png is not None:
+            _kitty_send_png(*pending_png)
         live.update(frame, refresh=True)
     finally:
         if stream is not None:
@@ -7375,7 +7404,7 @@ def main():
                         source_player=cur_player,
                         genre=current_genre,
                     )
-                    _sync_output_wrap(live, frame)
+                    _sync_output_wrap(live, frame, pending_png=_pending_png_and_clear())
 
                     heal_kitty_zoom(zoom_steps)
                     ch = poll_key(POLL_INTERVAL)

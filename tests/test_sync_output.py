@@ -59,7 +59,7 @@ class TestSyncOutputWrap(unittest.TestCase):
     HEIGHT = 12
     FRAMES = 4
 
-    def _capture(self) -> str:
+    def _capture(self, pending=None) -> str:
         buffer = io.StringIO()
         console = Console(
             file=buffer, force_terminal=True, width=self.WIDTH, height=self.HEIGHT
@@ -67,7 +67,7 @@ class TestSyncOutputWrap(unittest.TestCase):
         with Live(console=console, screen=True, auto_refresh=False) as live:
             for i in range(self.FRAMES):
                 frame = Panel(Text(f"frame {i}"), height=self.HEIGHT)
-                app._sync_output_wrap(live, frame)
+                app._sync_output_wrap(live, frame, pending_png=pending)
         return buffer.getvalue()
 
     def test_markers_are_written_raw(self):
@@ -84,6 +84,44 @@ class TestSyncOutputWrap(unittest.TestCase):
     def test_full_height_frames_do_not_scroll(self):
         out = self._capture()
         self.assertEqual(count_scrolls(out, self.HEIGHT), 0)
+
+    def test_pending_png_goes_inside_the_sync_block(self):
+        # The per-word image wipe must be transmitted between the start and
+        # end markers, so kitty applies the image and the placeholders in one
+        # atomic update. Sending it earlier showed a blank cell per step.
+        sent = []
+        real = app._kitty_send_png
+        app._kitty_send_png = lambda *args: sent.append(args)
+        try:
+            out = self._capture(pending=("id", b"png", 4, 6))
+        finally:
+            app._kitty_send_png = real
+        self.assertEqual(len(sent), self.FRAMES)
+        start = out.index("\x1b[?2026h")
+        end = out.index("\x1b[?2026l")
+        self.assertLess(start, end)
+        # Nothing was transmitted before the first block opened.
+        self.assertEqual(out[:start].count("\x1b_G"), 0)
+
+    def test_no_png_when_slot_is_empty(self):
+        # Wipe/None and the dot/bounce styles never park a PNG; the frame
+        # update must not transmit anything.
+        sent = []
+        real = app._kitty_send_png
+        app._kitty_send_png = lambda *args: sent.append(args)
+        try:
+            self._capture(pending=None)
+        finally:
+            app._kitty_send_png = real
+        self.assertEqual(sent, [])
+
+    def test_pending_slot_is_consumed_once(self):
+        app._PENDING_PNG[0] = ("id", b"png", 4, 6)
+        try:
+            self.assertIsNotNone(app._pending_png_and_clear())
+            self.assertIsNone(app._pending_png_and_clear())
+        finally:
+            app._PENDING_PNG[0] = None
 
 
 if __name__ == "__main__":
