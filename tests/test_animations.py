@@ -15,6 +15,14 @@ sys.path.insert(0, "src")
 from rich.text import Text
 from rich.cells import cell_len
 
+from sweep_lyrics.animations.bounce import (
+    BOUNCE_LANE_ROWS,
+    LANE_BLANK as BOUNCE_BLANK,
+    WordBounce,
+    active_word_span,
+    bounce_position,
+    bounce_progress,
+)
 from sweep_lyrics.animations.base import (
     AnimFrame,
     AnimState,
@@ -446,12 +454,120 @@ class TestAnimLaneRows(unittest.TestCase):
             self.app.set_animation(name)
             self.assertEqual(self.app._anim_lane_rows(24), 0)
 
+    def test_bounce_reserves_one_row(self):
+        self.app.WORD_MODE = False
+        self.app.set_animation("bounce")
+        self.assertEqual(self.app._anim_lane_rows(24), BOUNCE_LANE_ROWS)
+        # Bounce does not shrink on a short terminal: still one row.
+        self.assertEqual(self.app._anim_lane_rows(5), BOUNCE_LANE_ROWS)
+
     def test_per_word_mode_reserves_no_lane(self):
         # Cycling animations in per-word mode must not move the big word.
         self.app.WORD_MODE = True
-        for name in ("wipe", "dot", "none"):
+        for name in ("wipe", "dot", "bounce", "none"):
             self.app.set_animation(name)
             self.assertEqual(self.app._anim_lane_rows(24), 0)
+
+
+class TestWordBounce(unittest.TestCase):
+    """The active word hops between the lane row and the lyric row."""
+
+    def test_config(self):
+        bounce = WordBounce()
+        self.assertEqual(bounce.name, "bounce")
+        self.assertEqual(bounce.label, "Word bounce")
+        self.assertEqual(bounce.extra_rows_above, BOUNCE_LANE_ROWS)
+        # The lane is always one row, whatever the terminal height.
+        self.assertEqual(bounce.lane_rows_for(24), BOUNCE_LANE_ROWS)
+        self.assertEqual(bounce.lane_rows_for(4), BOUNCE_LANE_ROWS)
+        self.assertEqual(bounce.lane_rows_for(None), BOUNCE_LANE_ROWS)
+
+    def test_progress_tracks_the_sung_word(self):
+        # "hello" is held 10.0..10.3; progress is 0 at the onset, 1 at the end.
+        self.assertAlmostEqual(
+            bounce_progress(_two_word_state(word_idx=0, sync_pos=10.0)), 0.0)
+        self.assertAlmostEqual(
+            bounce_progress(_two_word_state(word_idx=0, sync_pos=10.15)), 0.5)
+        self.assertAlmostEqual(
+            bounce_progress(_two_word_state(word_idx=0, sync_pos=10.3)), 1.0)
+
+    def test_progress_clamps_and_is_none_without_a_word(self):
+        self.assertEqual(bounce_progress(_no_word_state()), None)
+        self.assertEqual(
+            bounce_progress(_two_word_state(word_idx=-1, sync_pos=9.0)), None)
+        # Past the word's end the progress saturates at 1, never overshoots.
+        self.assertEqual(
+            bounce_progress(_two_word_state(word_idx=0, sync_pos=99.0)), 1.0)
+
+    def test_position_switches_at_mid_hop(self):
+        self.assertEqual(bounce_position(0.0), "lane")
+        self.assertEqual(bounce_position(0.49), "lane")
+        self.assertEqual(bounce_position(0.5), "line")
+        self.assertEqual(bounce_position(1.0), "line")
+        self.assertEqual(bounce_position(None), "lane")
+
+    def test_word_is_up_in_the_lane_at_the_onset(self):
+        frame = WordBounce().render(_two_word_state(word_idx=0, sync_pos=10.0))
+        self.assertEqual(len(frame.above), BOUNCE_LANE_ROWS)
+        # The word "hello" is drawn in the lane row, in its own columns.
+        self.assertIn("hello", frame.above[0].plain)
+        # ...and hollowed out of the lyric row, so it is never drawn twice.
+        self.assertNotIn("hello", frame.line.plain)
+
+    def test_word_lands_back_on_the_lyric_row(self):
+        frame = WordBounce().render(_two_word_state(word_idx=0, sync_pos=10.3))
+        # Settled: the word is back on the lyric row, the lane is blank.
+        self.assertIn("hello", frame.line.plain)
+        self.assertNotIn("hello", frame.above[0].plain)
+        self.assertEqual(frame.above[0].plain, BOUNCE_BLANK * 11)
+
+    def test_exactly_one_copy_of_the_word(self):
+        # Across the whole hop the word is drawn in exactly one of the two
+        # rows — never both, never neither.
+        for pos in (10.0, 10.05, 10.14, 10.15, 10.2, 10.3):
+            frame = WordBounce().render(
+                _two_word_state(word_idx=0, sync_pos=pos))
+            in_lane = "hello" in frame.above[0].plain
+            in_line = "hello" in frame.line.plain
+            self.assertNotEqual(in_lane, in_line)
+
+    def test_lane_width_matches_the_line(self):
+        # The alignment guarantee: the lane is exactly as wide as the lyric
+        # row, so the shared centring/rail prefix lines the columns up.
+        for pos in (10.0, 10.3):
+            frame = WordBounce().render(
+                _two_word_state(word_idx=0, sync_pos=pos))
+            self.assertEqual(cell_len(frame.above[0].plain), 11)
+            self.assertEqual(cell_len(frame.line.plain), 11)
+
+    def test_no_trailing_ascii_space(self):
+        # rich rstrips whitespace before centring a table cell; the lane must
+        # not end in a space or it shifts right in the split layout.
+        for pos in (10.0, 10.3):
+            frame = WordBounce().render(
+                _two_word_state(word_idx=0, sync_pos=pos))
+            for row in (frame.above[0], frame.line):
+                self.assertEqual(row.plain, row.plain.rstrip())
+
+    def test_no_words_keeps_the_lane(self):
+        frame = WordBounce().render(_no_word_state())
+        self.assertEqual(len(frame.above), BOUNCE_LANE_ROWS)
+        self.assertNotIn("hello", frame.above[0].plain)
+        # The line is still rendered, in the accent colour.
+        self.assertEqual(frame.line.plain, "no words here")
+
+    def test_same_position_is_deterministic(self):
+        # A paused player re-renders the same sync_pos; nothing may move.
+        bounce = WordBounce()
+        state = _two_word_state(word_idx=0, sync_pos=10.1)
+        shots = {tuple(r.plain for r in bounce.render(state).above)
+                 for _ in range(20)}
+        self.assertEqual(len(shots), 1)
+
+    def test_active_word_span(self):
+        state = _two_word_state(word_idx=0, sync_pos=10.1)
+        self.assertEqual(active_word_span(state), (0, 5))
+        self.assertIsNone(active_word_span(_no_word_state()))
 
 
 class TestNoneAnimation(unittest.TestCase):

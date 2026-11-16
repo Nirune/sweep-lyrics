@@ -15,6 +15,7 @@ import os
 from typing import Dict, Tuple, Type
 
 from .base import AnimFrame, AnimState, LyricAnimation, WordSpan, resolve_word_spans
+from .bounce import WordBounce
 from .dot import BouncingDot
 from .none import NoneAnimation
 from .wipe import Wipe
@@ -41,7 +42,7 @@ DEFAULT_ANIMATION = "wipe"
 
 # name -> class. Ordered: this is also the runtime cycle order.
 REGISTRY: Dict[str, Type[LyricAnimation]] = {
-    a.name: a for a in (Wipe, BouncingDot, NoneAnimation)
+    a.name: a for a in (Wipe, BouncingDot, WordBounce, NoneAnimation)
 }
 
 
