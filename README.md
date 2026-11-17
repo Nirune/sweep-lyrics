@@ -112,9 +112,7 @@ Sweep Lyrics supports switchable lyric animations:
 
 **Environment variable**: Set `SWEEP_ANIMATION=wipe`, `SWEEP_ANIMATION=dot`, `SWEEP_ANIMATION=bounce`, or `SWEEP_ANIMATION=none` before running.
 
-**Settings**: Open settings (`o`) → **Lyric animation** → "Lyric style", then `←`/`→` to change it. The choice is saved as its name (`"bounce"`, not an index), so it persists between runs. The active style also shows in the footer (e.g., `anim:dot`) when it isn't the default.
-
-Settings are saved between runs, so anything you toggle (including per-word mode) stays as you left it.
+**Settings**: Open settings (`o`) → **Lyric animation** → "Lyric style", then `←`/`→` to change it. All settings (the animation choice, per-word mode, etc.) are saved as their name/value and persist between runs, so anything you toggle stays as you left it. The active style also shows in the footer (e.g., `anim:dot`) when it isn't the default.
 
 ## 🗑️ Uninstall
 
