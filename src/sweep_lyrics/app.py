@@ -5281,12 +5281,12 @@ def interlude_dot_row(t, lane=INTERLUDE_LANE_ROWS, hz=INTERLUDE_HOP_HZ,
 
 
 def _interlude_lane_rows(available=None):
-    """Lane rows for the interlude dot.
+    """Lane rows for the interlude indicator.
 
     Follows the active lyric animation's own lane height when it has one (the
-    ``dot`` style: 2 rows, or 1 on a short terminal). Falling back to
-    ``INTERLUDE_LANE_ROWS`` keeps the standalone indicator unchanged for the
-    other styles.
+    ``dot`` style: 2 rows, or 1 on a short terminal; ``bounce``: 1 row), so
+    entering a break does not change the block height. Wipe / none have no
+    lane of their own and fall back to ``INTERLUDE_LANE_ROWS``.
     """
     anim = animation_instance()
     fn = getattr(anim, "lane_rows_for", None)
@@ -5305,12 +5305,13 @@ def _interlude_lane(accent_hex, t=None, lane_rows=None, gap_info=None):
 
     Two styles, picked by the active animation's ``interlude_mode``:
 
-    * ``single_dot`` (``dot`` / ``bounce``): one dot that hops vertically inside
+    * ``single_dot`` (``dot``): one dot that hops vertically inside
       the lane in a constant accent colour, and matches that style's own lane
       height (2 rows, 1 on short terminals).
-    * ``three_dots`` (``wipe`` / ``none``): the Apple Music countdown — three
-      dots that light up one by one as the gap's remaining seconds run out
-      (outro: they fade out right to left) — in the default 3-row lane.
+    * ``three_dots`` (``wipe`` / ``none`` / ``bounce``): the Apple Music
+      countdown — three dots that light up one by one as the gap's remaining
+      seconds run out (outro: they fade out right to left) — in the style's
+      own lane (3 rows by default, 1 for bounce).
     """
     anim = animation_instance()
     mode = getattr(anim, "interlude_mode", "single_dot")

@@ -176,5 +176,34 @@ class TestInterludeThreeDots(unittest.TestCase):
         self.assertEqual([str(s) for s in a.spans], [str(s) for s in b.spans])
 
 
+class TestBounceInterludeCountdown(unittest.TestCase):
+    def setUp(self):
+        # Word bounce uses the same Apple countdown as wipe/none; only its
+        # lane height differs (1 row instead of 3).
+        app.set_animation("bounce")
+
+    def _styles(self, text):
+        return [str(sp.style) for sp in text.spans
+                if text.plain[sp.start:sp.end].strip()]
+
+    def test_bounce_shows_three_dots_not_a_single_dot(self):
+        lane_rows = app._interlude_lane_rows(20)
+        self.assertEqual(lane_rows, 1)
+        rows = app._interlude_lane("#00e5ff", t=0.0, lane_rows=lane_rows,
+                                   gap_info={"rem": 2.0, "is_outro": False})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].plain,
+                         f"{app.INTERLUDE_DOT_GLYPH}  "
+                         f"{app.INTERLUDE_DOT_GLYPH}  "
+                         f"{app.INTERLUDE_DOT_GLYPH}")
+        self.assertEqual(self._styles(rows[0]),
+                         ["#00e5ff", "#00e5ff", "#808080"])
+
+    def test_bounce_countdown_ends_fully_lit(self):
+        rows = app._interlude_lane("#00e5ff", t=0.0, lane_rows=1,
+                                   gap_info={"rem": 1.0, "is_outro": False})
+        self.assertEqual(self._styles(rows[0]), ["#00e5ff"] * 3)
+
+
 if __name__ == "__main__":
     unittest.main()
