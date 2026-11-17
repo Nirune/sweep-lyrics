@@ -128,6 +128,10 @@ class TestDotFreezesWithTheMusic(unittest.TestCase):
 
 
 class TestInterludeDotFreezes(unittest.TestCase):
+    def setUp(self):
+        # Interlude hop tests need the single-dot style.
+        app.set_animation("dot")
+
     def test_same_song_clock_keeps_the_dot_still(self):
         gap = {"rem": 8.0, "is_outro": False}
         first = app._instrumental_rows("#00e5ff", 100, 20, gap, t=10.123)

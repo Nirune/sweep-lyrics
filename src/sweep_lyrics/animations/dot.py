@@ -240,6 +240,9 @@ class BouncingDot(LyricAnimation):
     # DOT_LANE_ROWS_MIN on a short terminal and ``render`` returns exactly that
     # many rows (no padding), so the app's centring uses the same number.
     extra_rows_above = DOT_LANE_ROWS
+    # Interlude (intro / breaks / outro): one dot that hops inside the lane,
+    # matching this style's own lane height (2 rows, 1 on short terminals).
+    interlude_mode = "single_dot"
 
     def lane_rows(self, state: AnimState) -> int:
         """Rows this frame's lane occupies (2 normally, 1 when very short)."""

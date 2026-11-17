@@ -92,6 +92,8 @@ class WordBounce(LyricAnimation):
     name = "bounce"
     label = "Word bounce"
     extra_rows_above = BOUNCE_LANE_ROWS
+    # Interlude (intro / breaks / outro): one dot that hops inside the lane.
+    interlude_mode = "single_dot"
 
     def lane_rows_for(self, height=None) -> int:
         """The lane is always one row, however short the terminal is."""

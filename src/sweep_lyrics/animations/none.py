@@ -15,6 +15,10 @@ class NoneAnimation(LyricAnimation):
     name = "none"
     label = "Static"
     extra_rows_above = 0
+    # Interlude (intro / breaks / outro): the Apple Music countdown — three
+    # dots that light up as the gap's remaining seconds run out. Lane keeps
+    # the default 3-row height.
+    interlude_mode = "three_dots"
 
     def render(self, state: AnimState) -> AnimFrame:
         return self.frame(Text(state.line_text, style=f"bold {state.accent_hex}"))

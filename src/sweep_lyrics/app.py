@@ -5300,31 +5300,100 @@ def _interlude_lane_rows(available=None):
     return INTERLUDE_LANE_ROWS
 
 
-def _interlude_lane(accent_hex, t=None, lane_rows=None):
-    """The interlude dot as a fixed-height block of rows (top -> bottom).
+def _interlude_lane(accent_hex, t=None, lane_rows=None, gap_info=None):
+    """The interlude indicator as a fixed-height block of rows (top -> bottom).
 
-    Brightness follows the hop phase (truecolor blend of grey -> accent), so
-    the dot breathes: dim at the bottom of the jump, bright at the peak. Falls
-    back to plain accent / dim white when truecolor isn't available.
+    Two styles, picked by the active animation's ``interlude_mode``:
+
+    * ``single_dot`` (``dot`` / ``bounce``): one dot that hops vertically inside
+      the lane in a constant accent colour, and matches that style's own lane
+      height (2 rows, 1 on short terminals).
+    * ``three_dots`` (``wipe`` / ``none``): the Apple Music countdown — three
+      dots that light up one by one as the gap's remaining seconds run out
+      (outro: they fade out right to left) — in the default 3-row lane.
     """
+    anim = animation_instance()
+    mode = getattr(anim, "interlude_mode", "single_dot")
     t = time.monotonic() if t is None else t
+    if mode == "three_dots":
+        return _interlude_three_dots(gap_info or {}, accent_hex,
+                                     lane_rows=lane_rows)
+
     lane = INTERLUDE_LANE_ROWS if lane_rows is None else max(1, int(lane_rows))
     peak = min(INTERLUDE_HOP_ROWS, lane - 1)
-    phase = interlude_hop_phase(t)
+
+    # Constant colour: the dot keeps the accent at every hop phase, never a
+    # grey/colourless blend.
+    style = accent_hex
+
+    row = interlude_dot_row(t, lane=lane, peak=max(0, peak))
+    rows = [Text(INTERLUDE_LANE_BLANK) for _ in range(lane)]
+    rows[row] = Text(INTERLUDE_DOT_GLYPH, style=style, justify="center")
+    return rows
+
+
+def _render_apple_dots(gap_info, accent_hex):
+    """Apple Music style 3-dot countdown for instrumental gaps.
+
+    The row is symmetric (7 columns) so Align.center puts it on the same
+    centre line as the icon. Do not pad it on one side: a leading pad
+    shifts the visible dots right by pad/2 columns.
+
+    Each dot has a continuous intensity 0..1 and its colour is blended
+    colourless -> accent (same plain accent as the per-word position dots,
+    no bold), so it fades instead of switching:
+      intro / break: dot i fades in over the second before the old
+                     "lit" threshold (rem <= 3-i), all lit at rem <= 1.
+      outro:         all lit, then dots fade out right to left (dot 2 by
+                     rem 6, dot 1 by rem 3, dot 0 at the very end).
+    """
+    rem = gap_info.get("rem", 0.0)
+    is_outro = gap_info.get("is_outro", False)
+
+    dot_char = "●"
+    sep = "  "
 
     try:
         acc = _hex_to_rgb(accent_hex)
     except Exception:
         acc = None
-    if acc is None:
-        style = accent_hex if phase >= 0.5 else "dim white"
-    else:
-        r, g, b = _lerp_rgb(_DOT_OFF_RGB, acc, 0.30 + 0.70 * _smoothstep(phase))
-        style = f"#{r:02x}{g:02x}{b:02x}"
 
-    row = interlude_dot_row(t, lane=lane, peak=max(0, peak))
+    parts = []
+    for i in range(3):
+        if is_outro:
+            lvl = (rem - (3.0 * i)) / 1.5   # 1 -> fully lit, 0 -> colourless
+        else:
+            lvl = 4.0 - i - rem             # fade in during the last seconds
+        lvl = _smoothstep(lvl)
+        if acc is None:
+            style = accent_hex if lvl >= 0.5 else "dim white"
+        else:
+            r, g, b = _lerp_rgb(_DOT_OFF_RGB, acc, lvl)
+            style = f"#{r:02x}{g:02x}{b:02x}"
+        parts.append((dot_char, style))
+
+    t = Text(justify="center")
+    for i, (ch, style) in enumerate(parts):
+        if i > 0:
+            t.append(sep)
+        t.append(ch, style=style)
+
+    return t
+
+
+def _interlude_three_dots(gap_info, accent_hex, lane_rows=None):
+    """The Apple countdown row inside the fixed-height interlude lane.
+
+    Intensity comes from ``gap_info`` (remaining gap seconds on the song
+    clock), so the countdown freezes with the music while paused. The lane
+    keeps the default 3-row height (never shrinks to 1 even on short
+    terminals) so the intro / break / outro indicator always looks identical
+    regardless of which lyric style is active.
+    """
+    lane = INTERLUDE_LANE_ROWS if lane_rows is None else max(1, int(lane_rows))
+    middle = lane // 2
     rows = [Text(INTERLUDE_LANE_BLANK) for _ in range(lane)]
-    rows[row] = Text(INTERLUDE_DOT_GLYPH, style=style, justify="center")
+    rows[middle] = _render_apple_dots(gap_info, accent_hex)
     return rows
 
 
@@ -5386,7 +5455,8 @@ def _instrumental_rows(accent_hex, panel_width, available, gap_info=None,
     """
     plain = Text(INSTRUMENTAL_ICON, style="bold white", justify="center")
     lane = _interlude_lane(accent_hex, t=t,
-                           lane_rows=_interlude_lane_rows(available)) \
+                           lane_rows=_interlude_lane_rows(available),
+                           gap_info=gap_info) \
         if gap_info else []
     if not WORD_MODE:
         return [plain, *lane] if lane else [plain]
