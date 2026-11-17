@@ -103,14 +103,17 @@ class WordBounce(LyricAnimation):
     def _width(self, state: AnimState) -> int:
         return max(1, state.line_cols or cell_len(state.line_text))
 
-    def _styled_line(self, state: AnimState, word_in_line: bool, sung: bool) -> Text:
+    def _styled_line(self, state: AnimState, word_in_line: bool,
+                     prev_accent: bool, sung: bool) -> Text:
         """The lyric row.
 
         ``word_in_line``: is the active word drawn *in* the lyric row (true) or
         lifted into the lane above (false)?
+        ``prev_accent``: were the words before this one already sung? They
+        stay accent to mark the progress; the next word after the active one
+        is still white.
         ``sung``: has the active word already been sung at least once? When
-        true its accent colour persists (karaoke progress); when false the
-        word is still white until its onset.
+        true it keeps the accent; when false it is white until its onset.
         """
         text = state.line_text
         span = active_word_span(state)
@@ -120,14 +123,14 @@ class WordBounce(LyricAnimation):
         a, b = span
         t = Text()
         if word_in_line:
-            t.append(text[:a], style="bold white")
+            t.append(text[:a], style="bold white" if not prev_accent else f"bold {state.accent_hex}")
             t.append(text[a:b], style=active_style)
             t.append(text[b:], style="bold white")
         else:
             # word is up in the lane: lyric row carries the blank
-            t.append(text[:a], style=active_style)
+            t.append(text[:a], style="bold white" if not prev_accent else f"bold {state.accent_hex}")
             t.append(LANE_BLANK * (b - a), style="dim")
-            t.append(text[b:], style=active_style)
+            t.append(text[b:], style="bold white")
         return t
 
     def _lane_row(self, state: AnimState, word_in_lane: bool) -> Text:
@@ -158,8 +161,11 @@ class WordBounce(LyricAnimation):
         word_in_lane = bounce_position(p) == "lane"
         # Karaoke colour progress: a word turns accent as soon as it is sung
         # (lifted into the lane) and stays accent when it lands back on the
-        # line. Before its onset it is white.
+        # line. Words *before* the active one keep accent; the word after the
+        # active one is still white.
         sung = p is not None and p > 0
-        line = self._styled_line(state, word_in_line=not word_in_lane, sung=sung)
+        prev_accent = state.word_idx > 0
+        line = self._styled_line(state, word_in_line=not word_in_lane,
+                                 prev_accent=prev_accent, sung=sung)
         above = [self._lane_row(state, word_in_lane=word_in_lane)]
         return self.frame(line, above)
