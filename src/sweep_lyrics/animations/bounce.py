@@ -103,24 +103,31 @@ class WordBounce(LyricAnimation):
     def _width(self, state: AnimState) -> int:
         return max(1, state.line_cols or cell_len(state.line_text))
 
-    def _styled_line(self, state: AnimState, word_in_line: bool) -> Text:
-        """The lyric row: the active word drawn normally when it is *on* the
-        line, otherwise hollowed out to braille blanks so the lane above can
-        carry it without the word appearing twice."""
+    def _styled_line(self, state: AnimState, word_in_line: bool, sung: bool) -> Text:
+        """The lyric row.
+
+        ``word_in_line``: is the active word drawn *in* the lyric row (true) or
+        lifted into the lane above (false)?
+        ``sung``: has the active word already been sung at least once? When
+        true its accent colour persists (karaoke progress); when false the
+        word is still white until its onset.
+        """
         text = state.line_text
         span = active_word_span(state)
+        active_style = f"bold {state.accent_hex}" if (sung or word_in_line) else "bold white"
         if span is None:
-            return Text(text, style=f"bold {state.accent_hex}")
+            return Text(text, style=active_style)
         a, b = span
         t = Text()
         if word_in_line:
             t.append(text[:a], style="bold white")
-            t.append(text[a:b], style=f"bold {state.accent_hex}")
+            t.append(text[a:b], style=active_style)
             t.append(text[b:], style="bold white")
         else:
-            t.append(text[:a], style="bold white")
+            # word is up in the lane: lyric row carries the blank
+            t.append(text[:a], style=active_style)
             t.append(LANE_BLANK * (b - a), style="dim")
-            t.append(text[b:], style="bold white")
+            t.append(text[b:], style=active_style)
         return t
 
     def _lane_row(self, state: AnimState, word_in_lane: bool) -> Text:
@@ -137,7 +144,7 @@ class WordBounce(LyricAnimation):
             col = a + i
             if 0 <= col < width:
                 chars[col] = ch
-        return Text("".join(chars), style=f"bright bold {state.accent_hex}")
+        return Text("".join(chars), style=f"bold {state.accent_hex}")
 
     # ---- frame ------------------------------------------------------
     def render(self, state: AnimState) -> AnimFrame:
@@ -149,6 +156,10 @@ class WordBounce(LyricAnimation):
         """
         p = bounce_progress(state)
         word_in_lane = bounce_position(p) == "lane"
-        line = self._styled_line(state, word_in_line=not word_in_lane)
+        # Karaoke colour progress: a word turns accent as soon as it is sung
+        # (lifted into the lane) and stays accent when it lands back on the
+        # line. Before its onset it is white.
+        sung = p is not None and p > 0
+        line = self._styled_line(state, word_in_line=not word_in_lane, sung=sung)
         above = [self._lane_row(state, word_in_lane=word_in_lane)]
         return self.frame(line, above)
