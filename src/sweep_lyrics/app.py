@@ -6283,14 +6283,21 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         dock_parts = []
         dock_w = min(panel_width - 6, 52)
         dock_parts.append(Align.center(Text("─" * dock_w, style=f"dim {ACCENT}")))
-        meta = Text(justify="center")
-        meta.append(title or "unknown", style=f"bold {ACCENT}")
-        if artist:
-            meta.append("  ·  ", style="dim")
-            meta.append(artist, style=ARTIST_ACCENT)
-        if shazam_active:
-            meta.append("  · songrec", style="dim italic")
-        dock_parts.append(meta)
+        # Title/artist live in the cover caption whenever the art column is
+        # visible, so the strip only takes them over when there is no
+        # caption to read them from (cover disabled or unsupported).
+        # SongRec state stays in the strip: the caption never carries it.
+        if not cover_offset:
+            meta = Text(justify="center")
+            meta.append(title or "unknown", style=f"bold {ACCENT}")
+            if artist:
+                meta.append("  ·  ", style="dim")
+                meta.append(artist, style=ARTIST_ACCENT)
+            if shazam_active:
+                meta.append("  · songrec", style="dim italic")
+            dock_parts.append(meta)
+        elif shazam_active:
+            dock_parts.append(Text("songrec", style="dim italic", justify="center"))
         if shazam_status_hint:
             dock_parts.append(Text(shazam_status_hint, style=f"italic {WARN_ACCENT}", justify="center"))
         dock_parts.append(Align.center(progress))
