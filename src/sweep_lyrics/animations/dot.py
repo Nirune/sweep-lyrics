@@ -82,8 +82,6 @@ DOT_BOB_SUBROWS = 1        # gentle bob amplitude while a word is held
 BOB_HZ = 1.2               # bobs per second while holding a word
 ARC_SEC = 0.24             # longest jump toward the next word (s)
 ARC_LEAD = 0.04            # land this long before the next word's onset
-DIM_LEVEL = 0.30           # brightness at rest (1.0 at the top of the lane)
-DOT_OFF_RGB = (128, 128, 128)  # "colourless" end of the breathing blend
 
 # Empty lane cells are drawn as a braille blank rather than a space: rich's
 # ``Lines.justify("center")`` calls ``rstrip()`` on every line before centring
@@ -210,25 +208,14 @@ def dot_subrow(state: AnimState, lane_rows: int = DOT_LANE_ROWS) -> int:
     return clamp_subrow(rest - DOT_BOB_SUBROWS * bob, lane_rows)
 
 
-def _hex_rgb(hex_str: str) -> Optional[Tuple[int, int, int]]:
-    s = (hex_str or "").lstrip("#")
-    if len(s) != 6:
-        return None
-    try:
-        return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
-    except ValueError:
-        return None
-
-
 def dot_style(phase: float, accent_hex: str) -> str:
-    """Truecolor style that breathes: grey at rest, accent at the lane top."""
-    acc = _hex_rgb(accent_hex)
-    if acc is None:
-        return accent_hex  # named/palette style: no blend available
-    level = DIM_LEVEL + (1.0 - DIM_LEVEL) * smoothstep(phase)
-    r, g, b = (round(off + (on - off) * level)
-               for off, on in zip(DOT_OFF_RGB, acc))
-    return f"bold #{r:02x}{g:02x}{b:02x}"
+    """Constant accent style for the dot.
+
+    The dot used to breathe between grey and the accent (``phase``); it now
+    keeps one colour so it reads as a solid accent mark rather than something
+    that fades in and out. ``phase`` is kept for callers/tests.
+    """
+    return f"bold {accent_hex}"
 
 
 class BouncingDot(LyricAnimation):

@@ -341,6 +341,22 @@ class TestBouncingDot(unittest.TestCase):
         frame = dot.render(state)
         self.assertEqual(frame.above[row].plain[col], DOT_GLYPH)
 
+    def test_dot_colour_is_constant(self):
+        # One accent style at rest, mid-jump and at the lane top: the dot
+        # never fades to grey.
+        dot = BouncingDot()
+        styles = set()
+        for pos in (10.1, 10.5, 10.9):
+            state = _two_word_state(word_idx=0, sync_pos=pos)
+            frame = dot.render(state)
+            for row in frame.above:
+                if DOT_GLYPH not in row.plain:
+                    continue
+                spanned = [str(sp.style) for sp in row.spans
+                           if DOT_GLYPH in row.plain[sp.start:sp.end]]
+                styles.update(spanned or [str(row.style)])
+        self.assertEqual(styles, {"bold #00e5ff"})
+
     def test_position_matches_during_the_arc(self):
         start, end = arc_window(_two_word_state(word_idx=0, sync_pos=10.1))
         state = _two_word_state(word_idx=0, sync_pos=(start + end) / 2)
