@@ -1849,13 +1849,13 @@ def _cover_rows():
 def _cover_place_top(term_height=None):
     """Top cell for the cover image.
 
-    - dock layout → near the bottom (lines up with the dock strip)
+    - dock interface → near the bottom (lines up with the dock strip)
     - classic     → upper-third of the left column so art + caption
                     form one visual block instead of a tiny stamp
                     floating in empty space
     """
     rows = _cover_rows()
-    if LAYOUT_MODE == 4 and term_height and term_height > rows + 4:
+    if ui_docked(LAYOUT_MODE) and term_height and term_height > rows + 4:
         return max(COVER_MARGIN_TOP, term_height - rows - 1)
     if term_height and term_height > rows + COVER_CAPTION_ROWS + 4:
         stack = rows + COVER_CAPTION_ROWS
@@ -1867,7 +1867,7 @@ def _cover_place_top(term_height=None):
 
 def show_cover(image_path, term_height=None):
     """Draws `image_path` into Kitty's graphics layer on the left.
-    Position depends on LAYOUT_MODE (dock → bottom, otherwise top).
+    Position depends on the interface chrome (dock → bottom, otherwise top).
     No-op outside Kitty or if there's no image.
     NOTE: --place uses WIDTHxHEIGHT@LEFTxTOP — the separator between
     left and top is a literal 'x', not a comma.
@@ -2776,6 +2776,52 @@ def apply_settings(s):
 
 
 LAYOUT_MODE = 0  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock · 5 split
+
+# ---- lyric layout vs. interface chrome ---------------------------------
+# ``layout_mode`` is the persisted/menu value (0..5). The *lyric* arrangement
+# and the *interface* chrome are two independent axes:
+#
+#   lyric layout   classic · bait · timeline · hud · split
+#   interface      standard · dock (bottom info strip + cover moved down)
+#
+# Today the menu still stores both in ``layout_mode`` (dock = mode 4), so this
+# split is derived. Once the Interface settings page lands it will read
+# ``ui_mode`` directly; the renderer already only talks to these helpers, so
+# nothing in the drawing code needs to change again.
+LAYOUT_CLASSIC = 0
+LAYOUT_BAIT = 1
+LAYOUT_TIMELINE = 2
+LAYOUT_HUD = 3
+LAYOUT_SPLIT = 4
+LYRIC_LAYOUT_NAMES = ("classic", "bait", "timeline", "hud", "split")
+_UI_DOCK = 1
+# persisted layout_mode -> lyric layout id (dock keeps the classic
+# arrangement; only its interface chrome differs)
+_LYRIC_LAYOUT_OF = (LAYOUT_CLASSIC, LAYOUT_BAIT, LAYOUT_TIMELINE,
+                    LAYOUT_HUD, LAYOUT_CLASSIC, LAYOUT_SPLIT)
+
+
+def lyric_layout(mode):
+    """Lyric-only layout id for a persisted ``layout_mode`` (0..5)."""
+    try:
+        return _LYRIC_LAYOUT_OF[max(0, min(5, int(mode)))]
+    except (TypeError, ValueError):
+        return LAYOUT_CLASSIC
+
+
+def ui_mode_for(mode):
+    """Interface chrome id for a persisted ``layout_mode`` (0..5)."""
+    try:
+        return _UI_DOCK if int(mode) == 4 else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def ui_docked(mode):
+    """True when the interface chrome is the bottom dock."""
+    return ui_mode_for(mode) == _UI_DOCK
+
+
 WORD_GRADIENT = 3  # 0 off · 1 letter · 2 column · 3 wipe (per-word mode)
 WORD_STYLE = 5  # 0 dots · 1 solid · 2 text · 3 sextant · 4 scaled (OSC 66) · 5 image · 6 ascii
 WORD_SIZE = 1  # 0 small · 1 medium · 2 large (per-word mode)
@@ -5189,15 +5235,18 @@ def _anim_lane_rows(height=None):
     return max(0, int(getattr(anim, "extra_rows_above", 0) or 0))
 
 
-def _anim_view(layout, *, split=False):
+def _anim_view(layout, *, split=False, dock=False):
     """Container that centres the lyric row; names what the dot lanes line up
     with. Only the plain centred layouts let the debug log work out an absolute
     screen column, so the others are reported by name instead."""
-    if split or layout == 5:
+    if split or layout == LAYOUT_SPLIT:
         return "split"
-    if layout in (0, 1):  # classic, bait: row is Align.center()ed in the panel
+    if dock:
+        return "dock"
+    if layout in (LAYOUT_CLASSIC, LAYOUT_BAIT):  # row is Align.center()ed in the panel
         return "centered"
-    return _LAYOUT_NAMES[layout] if layout < len(_LAYOUT_NAMES) else "centered"
+    return (LYRIC_LAYOUT_NAMES[layout]
+            if 0 <= layout < len(LYRIC_LAYOUT_NAMES) else "centered")
 
 
 def _lane_row(row, prefix=""):
@@ -5643,24 +5692,26 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     # leaving a fixed small block surrounded by empty space
     # border/padding/header/gaps/progress/hint, roughly; the top header
     # (shown only without cover art) needs two more rows or a full window overflows
-    reserved = 15 if (not cover_offset and not ZEN_MODE and LAYOUT_MODE != 4) else 11
+    reserved = 15 if (not cover_offset and not ZEN_MODE
+                      and not ui_docked(LAYOUT_MODE)) else 11
     available = max(0, height - reserved)
     context_lines = max(CONTEXT_LINES, min(MAX_CONTEXT_LINES, available // 2))
-    # layout tweaks
-    layout = LAYOUT_MODE  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock · 5 split
+    # Two independent axes: the lyric arrangement and the interface chrome.
+    layout = lyric_layout(LAYOUT_MODE)  # classic · bait · timeline · hud · split
+    dock_ui = ui_docked(LAYOUT_MODE)    # bottom info strip + low cover
     if ZEN_MODE or WORD_MODE:
         # mini mode — only the active line (and maybe one neighbor)
         context_lines = 0
-    elif layout == 1:  # bait — one stanza at a time (window comes from _bait_bounds)
-        pass
-    elif layout == 0:  # classic — the old timeline look: one extra pair of context lines
-        context_lines = max(context_lines, min(MAX_CONTEXT_LINES, available // 2 + 1))
-    elif layout == 2:  # timeline — same density as classic, the rail is its identity
-        pass
-    elif layout == 3:  # hud — prev / active / next in corner brackets
-        context_lines = 1
-    elif layout == 4:  # dock — lyrics own the upper area
+    elif dock_ui:  # dock — lyrics own the upper area
         context_lines = max(CONTEXT_LINES, min(MAX_CONTEXT_LINES, available // 2))
+    elif layout == LAYOUT_BAIT:  # one stanza at a time (window comes from _bait_bounds)
+        pass
+    elif layout == LAYOUT_CLASSIC:  # classic — one extra pair of context lines
+        context_lines = max(context_lines, min(MAX_CONTEXT_LINES, available // 2 + 1))
+    elif layout == LAYOUT_TIMELINE:  # same density as classic, the rail is its identity
+        pass
+    elif layout == LAYOUT_HUD:  # prev / active / next in corner brackets
+        context_lines = 1
 
     if not entries:
         if plain_lyrics:
@@ -5737,7 +5788,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
 
         start = max(0, idx - context_lines)
         end = min(len(entries) - 1, idx + context_lines)
-        if layout == 1 and not (ZEN_MODE or WORD_MODE):
+        if layout == LAYOUT_BAIT and not (ZEN_MODE or WORD_MODE):
             start, end = _bait_bounds(entries, idx)
 
         line_start = entries[idx][0] if idx >= 0 else 0
@@ -5900,7 +5951,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                 continue
             line_text = line_text or " "
             if i == idx:
-                if i > start and layout != 3:
+                if i > start and layout != LAYOUT_HUD:
                     body_lines.append(Text(""))
                 if in_gap:
                     body_lines.extend(_instrumental_rows(active_accent_hex, panel_width, available, in_gap, sync_pos))
@@ -5986,8 +6037,8 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                         pos=pos, line_idx=idx,
                         width=panel_width, height=available,
                         wipe_span=wipe_span,
-                        lead_cols=(2 if layout == 0 else 0),
-                        view=_anim_view(layout),
+                        lead_cols=(2 if layout == LAYOUT_CLASSIC and not dock_ui else 0),
+                        view=_anim_view(layout, dock=dock_ui),
                     )
                     kl = kl if isinstance(kl, Text) else Text(str(kl))
                     # Lane rows (e.g. the bouncing dot's track) go directly
@@ -5997,11 +6048,12 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                     # prefix, so its columns line up with the lyric's.
                     for _row in _above:
                         body_lines.append(
-                            _lane_row(_row, "  " if layout == 0 else ""))
-                    if layout == 2:  # timeline — rail is drawn when body is assembled
+                            _lane_row(_row,
+                                     "  " if layout == LAYOUT_CLASSIC and not dock_ui else ""))
+                    if layout == LAYOUT_TIMELINE:  # rail is drawn when body is assembled
                         timeline_active.add(id(kl))
                         body_lines.append(kl)
-                    elif layout == 0:  # classic — accent block in front of the active line
+                    elif layout == LAYOUT_CLASSIC and not dock_ui:  # classic accent block
                         rail = Text()
                         rail.append("▌ ", style=active_accent_hex)
                         rail.append_text(kl)
@@ -6009,7 +6061,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                     else:
                         body_lines.append(kl)
                 else:
-                    if layout == 2:
+                    if layout == LAYOUT_TIMELINE:
                         marked = Text(line_text, style=f"bold {active_accent_hex}")
                         timeline_active.add(id(marked))
                     else:
@@ -6021,13 +6073,13 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                     body_lines.append(Text(translations[i], style="dim italic"))
                 if debug_line is not None:
                     body_lines.append(debug_line)
-                if i < end and layout != 3:
+                if i < end and layout != LAYOUT_HUD:
                     body_lines.append(Text(""))
             else:
                 distance = abs(i - idx)
-                if layout == 3 and distance > 1:
+                if layout == LAYOUT_HUD and distance > 1:
                     continue  # hud: only ±1 context
-                if layout == 1 and not (ZEN_MODE or WORD_MODE):
+                if layout == LAYOUT_BAIT and not (ZEN_MODE or WORD_MODE):
                     # bait: finished lines recede, upcoming ones stay readable
                     body_lines.append(Text(line_text, style="dim" if i < idx else "white"))
                 elif distance == 1:
@@ -6038,7 +6090,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                     body_lines.append(Text(line_text, style="rgb(70,70,85)"))
 
     hud_boxed = False
-    split_view_active = (translate_enabled and layout == 5
+    split_view_active = (translate_enabled and layout == LAYOUT_SPLIT
                          and not (ZEN_MODE or WORD_MODE)
                          and translations and entries)
     
@@ -6056,7 +6108,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                 continue
             
             distance = abs(i - idx)
-            if layout == 3 and distance > 1:
+            if layout == LAYOUT_HUD and distance > 1:
                 continue
             if i < start or i > end:
                 continue
@@ -6116,7 +6168,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             
             body_lines = [split_table]
     
-    if layout == 2 and entries and not (ZEN_MODE or WORD_MODE) and not split_view_active:
+    if layout == LAYOUT_TIMELINE and entries and not (ZEN_MODE or WORD_MODE) and not split_view_active:
         # timeline: lyrics left-aligned, one continuous vertical rail on
         # their left; the active line's segment is bold + accent
         tl = Table.grid(padding=0)
@@ -6130,7 +6182,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             else:
                 tl.add_row(Text("│ ", style=f"dim {ACCENT}"), t)
         body = Align.center(tl)
-    elif layout == 3 and entries and not (ZEN_MODE or WORD_MODE) and not split_view_active:
+    elif layout == LAYOUT_HUD and entries and not (ZEN_MODE or WORD_MODE) and not split_view_active:
         # hud: the 3-line readout sits in corner brackets only
         from rich import box as _box
         hud_boxed = True
@@ -6203,7 +6255,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     row2 = []
 
     blocks = []
-    if layout == 4:
+    if dock_ui:
         # ── BOTTOM DOCK ───────────────────────────────────────────────
         # Push the dock strip to the physical bottom of the panel with
         # enough blank rows between lyrics and dock so it doesn't float
@@ -6313,7 +6365,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         uncounted_lane = lane_rows if split_view_active else 0
         free = max(1, usable - header_h - body_h - footer_h - uncounted_lane)
 
-        bait_sub = layout == 1 and bool(entries) and not (ZEN_MODE or WORD_MODE)
+        bait_sub = layout == LAYOUT_BAIT and bool(entries) and not (ZEN_MODE or WORD_MODE)
         if ZEN_MODE or WORD_MODE or bait_sub:
             # split free space above/below so the lyric sits vertically
             # centered between the (empty) top and the footer
@@ -6363,7 +6415,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         limit = caption_width * max_lines
         return s if len(s) <= limit else s[:limit - 1] + "…"
 
-    if layout == 4:
+    if dock_ui:
         # dock: cover is at the bottom of the left column — leave the
         # upper area empty and put a thin caption just above the art.
         top_pad = max(0, height - cover_rows - 6)
@@ -7512,7 +7564,7 @@ def main():
                     # first. 't' still toggles them off afterwards. Word
                     # mode keeps translation opt-in since it stays inline.
                     _want_key = (artist, title, TRANSLATE_TARGET_LANG, LAYOUT_MODE)
-                    if (LAYOUT_MODE == 5 and entries
+                    if (lyric_layout(LAYOUT_MODE) == LAYOUT_SPLIT and entries
                             and not (ZEN_MODE or WORD_MODE)
                             and auto_translate_key != _want_key):
                         auto_translate_key = _want_key
