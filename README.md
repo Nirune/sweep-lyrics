@@ -112,7 +112,7 @@ Sweep Lyrics supports switchable lyric animations:
 
 **Environment variable**: Set `SWEEP_ANIMATION=wipe`, `SWEEP_ANIMATION=dot`, `SWEEP_ANIMATION=bounce`, or `SWEEP_ANIMATION=none` before running.
 
-**Settings**: Open settings (`o`) → **Lyric animation** → "Lyric style", then `←`/`→` to change it. All settings (the animation choice, per-word mode, etc.) are saved as their name/value and persist between runs, so anything you toggle stays as you left it. The active style also shows in the footer (e.g., `anim:dot`) when it isn't the default.
+**Settings**: Open settings (`o`) → **Lyric animation** → "Lyric style", then `←`/`→` to change it. **Layout → Mode** picks the lyric arrangement (classic / bait / timeline / hud / split); **Interface → Mode** switches the global chrome between the standard footer + left cover (`standard`) and the bottom info strip (`dock`). All settings (the animation choice, per-word mode, etc.) are saved as their name/value and persist between runs, so anything you toggle stays as you left it. The active style also shows in the footer (e.g., `anim:dot`) when it isn't the default.
 
 ## 🗑️ Uninstall
 

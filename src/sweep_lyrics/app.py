@@ -1855,7 +1855,7 @@ def _cover_place_top(term_height=None):
                     floating in empty space
     """
     rows = _cover_rows()
-    if ui_docked(LAYOUT_MODE) and term_height and term_height > rows + 4:
+    if ui_docked() and term_height and term_height > rows + 4:
         return max(COVER_MARGIN_TOP, term_height - rows - 1)
     if term_height and term_height > rows + COVER_CAPTION_ROWS + 4:
         stack = rows + COVER_CAPTION_ROWS
@@ -2576,16 +2576,21 @@ SETTINGS_FILE = CACHE_DIR / "settings.json"
 # Hierarchical settings: categories → items
 # item tuple: (key, label, type, default, min, max, step)
 # type: "float" | "bool" | "int"
-# layout_mode is int 0..5 → classic / bait / timeline / hud / dock / split
-_LAYOUT_NAMES = ("classic", "bait", "timeline", "hud", "dock", "split")
+# layout_mode is int 0..4 → classic / bait / timeline / hud / split
+# ui_mode    is int 0..1 → standard / dock (global interface chrome)
+_LAYOUT_NAMES = ("classic", "bait", "timeline", "hud", "split")
+_UI_NAMES = ("standard", "dock")
 
 _SETTINGS_CATEGORIES = [
     ("layout", "Layout", [
-        ("layout_mode",          "Mode",                     "int",   0,    0,     5,    1),
+        ("layout_mode",          "Mode",                     "int",   0,    0,     4,    1),
         ("word_mode",            "Per-word mode",            "bool",  True,  None, None, None),
         ("word_size",            "Per-word size",            "int",   1,    0,     2,    1),
         ("word_style",           "Per-word style",           "int",   5,    0,     6,    1),
         ("word_gradient",        "Per-word gradient",        "int",   3,    0,     3,    1),
+    ]),
+    ("interface", "Interface", [
+        ("ui_mode",              "Mode",                     "int",   0,    0,     1,    1),
     ]),
     ("animation", "Lyric animation", [
         ("animation",            "Lyric style",              "str",   "wipe", None, None, None),
@@ -2634,10 +2639,11 @@ _SETTINGS_SCHEMA = [item for _, _, items in _SETTINGS_CATEGORIES for item in ite
 # Menu tree for the settings panel (the schema above stays flat).
 # "advanced" is a group: it opens a submenu of the categories listed in
 # _SETTINGS_ADVANCED instead of an item list.
-_SETTINGS_TOP = ["layout", "animation", "display", "cover", "advanced"]
+_SETTINGS_TOP = ["layout", "interface", "animation", "display", "cover", "advanced"]
 _SETTINGS_ADVANCED = ["per_word", "karaoke", "onset", "sync"]
 _SETTINGS_BLURBS = {
     "layout": "mode and per-word look",
+    "interface": "footer + left cover · dock = bottom strip",
     "animation": "lyric style (wipe / dot / bounce / none)",
     "display": "context lines, panel border",
     "cover": "art size, corners, accent",
@@ -2660,11 +2666,25 @@ def load_settings():
         try:
             data = json.loads(SETTINGS_FILE.read_text())
             if isinstance(data, dict):
+                if "ui_mode" not in data:
+                    # Pre-Interface settings.json: layout_mode held both axes
+                    # (4 = dock chrome on a classic lyric layout, 5 = split).
+                    # Keep the user's current look by splitting it in two.
+                    try:
+                        legacy = max(0, min(5, int(data.get("layout_mode", 0))))
+                    except (TypeError, ValueError):
+                        legacy = 0
+                    (data["layout_mode"],
+                     data["ui_mode"]) = _LEGACY_LAYOUT_UI[legacy]
                 for k in s:
                     if k in data:
                         s[k] = data[k]
         except Exception:
             pass
+    try:
+        s["ui_mode"] = max(0, min(1, int(s.get("ui_mode", 0))))
+    except (TypeError, ValueError):
+        s["ui_mode"] = 0
     # Migrate the old integer animation index (pre-name settings) to a name,
     # so an existing settings.json picks the style it actually meant.
     try:
@@ -2692,7 +2712,7 @@ def apply_settings(s):
     global ONSET_ENABLED, ONSET_BLEND, ONSET_SILENCE_RMS, GLOBAL_OFFSET_STEP
     global CONTEXT_LINES, _INTER_WORD_PAUSE, POLL_INTERVAL
     global ONSET_FLUX_PERCENTILE, ONSET_MIN_INTERVAL, SHAZAM_OFFSET_FUDGE
-    global LAYOUT_MODE, COVER_ACCENT_ENABLED, WORD_MODE, WORD_SIZE, WORD_STYLE, WORD_GRADIENT
+    global LAYOUT_MODE, UI_MODE, COVER_ACCENT_ENABLED, WORD_MODE, WORD_SIZE, WORD_STYLE, WORD_GRADIENT
     global COVER_ENABLED
     global INSTRUMENTAL_ENABLED
     global SHOW_ADLIB
@@ -2754,7 +2774,12 @@ def apply_settings(s):
         LAYOUT_MODE = int(s.get("layout_mode", 0))
     except (TypeError, ValueError):
         LAYOUT_MODE = 0
-    LAYOUT_MODE = max(0, min(5, LAYOUT_MODE))
+    LAYOUT_MODE = max(0, min(LAYOUT_SPLIT, LAYOUT_MODE))
+    try:
+        UI_MODE = int(s.get("ui_mode", 0))
+    except (TypeError, ValueError):
+        UI_MODE = 0
+    UI_MODE = max(0, min(_UI_DOCK, UI_MODE))
     WORD_MODE = bool(s.get("word_mode", True))
     try:
         WORD_SIZE = max(0, min(2, int(s.get("word_size", 1))))
@@ -2775,19 +2800,19 @@ def apply_settings(s):
     TRANSLATE_TARGET_LANG = TRANSLATE_LANGS[_tl_idx][0]
 
 
-LAYOUT_MODE = 0  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 dock · 5 split
+LAYOUT_MODE = 0  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 split
+UI_MODE = 0      # 0 standard · 1 dock (interface chrome, independent of layout)
 
 # ---- lyric layout vs. interface chrome ---------------------------------
-# ``layout_mode`` is the persisted/menu value (0..5). The *lyric* arrangement
-# and the *interface* chrome are two independent axes:
+# Two independent axes, each persisted as its own setting:
 #
-#   lyric layout   classic · bait · timeline · hud · split
-#   interface      standard · dock (bottom info strip + cover moved down)
+#   layout_mode   lyric arrangement   classic · bait · timeline · hud · split
+#   ui_mode       interface chrome    standard · dock
 #
-# Today the menu still stores both in ``layout_mode`` (dock = mode 4), so this
-# split is derived. Once the Interface settings page lands it will read
-# ``ui_mode`` directly; the renderer already only talks to these helpers, so
-# nothing in the drawing code needs to change again.
+# The dock keeps the classic lyric arrangement; only the chrome changes
+# (bottom info strip, cover moved down, footer replaced). Files written before
+# the Interface page stored both axes in ``layout_mode`` (4 = dock, 5 =
+# split); ``load_settings`` migrates them through ``_LEGACY_LAYOUT_UI``.
 LAYOUT_CLASSIC = 0
 LAYOUT_BAIT = 1
 LAYOUT_TIMELINE = 2
@@ -2795,31 +2820,23 @@ LAYOUT_HUD = 3
 LAYOUT_SPLIT = 4
 LYRIC_LAYOUT_NAMES = ("classic", "bait", "timeline", "hud", "split")
 _UI_DOCK = 1
-# persisted layout_mode -> lyric layout id (dock keeps the classic
-# arrangement; only its interface chrome differs)
-_LYRIC_LAYOUT_OF = (LAYOUT_CLASSIC, LAYOUT_BAIT, LAYOUT_TIMELINE,
-                    LAYOUT_HUD, LAYOUT_CLASSIC, LAYOUT_SPLIT)
+# legacy layout_mode (0..5) -> (lyric layout, interface chrome)
+_LEGACY_LAYOUT_UI = ((LAYOUT_CLASSIC, 0), (LAYOUT_BAIT, 0),
+                     (LAYOUT_TIMELINE, 0), (LAYOUT_HUD, 0),
+                     (LAYOUT_CLASSIC, _UI_DOCK), (LAYOUT_SPLIT, 0))
 
 
 def lyric_layout(mode):
-    """Lyric-only layout id for a persisted ``layout_mode`` (0..5)."""
+    """Clamp a persisted ``layout_mode`` to a lyric layout id (0..4)."""
     try:
-        return _LYRIC_LAYOUT_OF[max(0, min(5, int(mode)))]
+        return max(LAYOUT_CLASSIC, min(LAYOUT_SPLIT, int(mode)))
     except (TypeError, ValueError):
         return LAYOUT_CLASSIC
 
 
-def ui_mode_for(mode):
-    """Interface chrome id for a persisted ``layout_mode`` (0..5)."""
-    try:
-        return _UI_DOCK if int(mode) == 4 else 0
-    except (TypeError, ValueError):
-        return 0
-
-
-def ui_docked(mode):
+def ui_docked():
     """True when the interface chrome is the bottom dock."""
-    return ui_mode_for(mode) == _UI_DOCK
+    return UI_MODE == _UI_DOCK
 
 
 WORD_GRADIENT = 3  # 0 off · 1 letter · 2 column · 3 wipe (per-word mode)
@@ -2842,7 +2859,7 @@ _INTER_WORD_PAUSE = 0.45
 def show_settings(live, settings):
     """Hierarchical settings panel.
 
-    top       Layout · Display · Cover · Advanced ›
+    top       Layout · Interface · Lyric animation · Display · Cover · Advanced ›
     advanced  Karaoke / wipe · Onset hybrid · Sync
     items     ↑↓ select · ←→/space change · r reset · enter save · esc back
 
@@ -2851,6 +2868,7 @@ def show_settings(live, settings):
     live.stop()
     console = Console()
     draft = dict(settings)
+    draft.setdefault("ui_mode", 0)
     # The panel's starting point must be the style actually in effect.
     if "animation" in draft:
         draft["animation"] = ANIMATION
@@ -2861,7 +2879,8 @@ def show_settings(live, settings):
 
     tips = {
         "animation": "lyric style — " + " / ".join(ANIMATION_NAMES),
-        "layout_mode": "classic · bait · timeline · hud · dock · split (split = side-by-side translation)",
+        "layout_mode": "classic · bait · timeline · hud · split (split = side-by-side translation)",
+        "ui_mode": "standard = footer + cover left · dock = bottom strip",
         "word_mode": "one word at a time, big + centered",
         "show_cover": "off = title + artist move to the top header (dock: bottom strip)",
         "cover_size": "small · medium · large",
@@ -2882,7 +2901,7 @@ def show_settings(live, settings):
         "shazam_offset_fudge": "extra lag compensation after SongRec match",
     }
     menu_tips = {"advanced": "tuning knobs, safe to leave alone"}
-    named = ("layout_mode", "word_size", "word_style", "word_gradient",
+    named = ("layout_mode", "ui_mode", "word_size", "word_style", "word_gradient",
              "cover_size", "cover_shape", "panel_corners",
              "translate_lang", "animation")
 
@@ -2925,11 +2944,12 @@ def show_settings(live, settings):
                 return TRANSLATE_LANG_NAMES[int(val)]
             except (TypeError, ValueError, IndexError):
                 return TRANSLATE_LANG_NAMES[0]
-        if key == "layout_mode":
+        if key in ("layout_mode", "ui_mode"):
+            names = _LAYOUT_NAMES if key == "layout_mode" else _UI_NAMES
             try:
-                return _LAYOUT_NAMES[int(val)]
+                return names[int(val)]
             except (TypeError, ValueError, IndexError):
-                return _LAYOUT_NAMES[0]
+                return names[0]
         if typ == "bool":
             return "on" if val else "off"
         if typ == "float":
@@ -5693,12 +5713,12 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     # border/padding/header/gaps/progress/hint, roughly; the top header
     # (shown only without cover art) needs two more rows or a full window overflows
     reserved = 15 if (not cover_offset and not ZEN_MODE
-                      and not ui_docked(LAYOUT_MODE)) else 11
+                      and not ui_docked()) else 11
     available = max(0, height - reserved)
     context_lines = max(CONTEXT_LINES, min(MAX_CONTEXT_LINES, available // 2))
     # Two independent axes: the lyric arrangement and the interface chrome.
     layout = lyric_layout(LAYOUT_MODE)  # classic · bait · timeline · hud · split
-    dock_ui = ui_docked(LAYOUT_MODE)    # bottom info strip + low cover
+    dock_ui = ui_docked()    # bottom info strip + low cover
     if ZEN_MODE or WORD_MODE:
         # mini mode — only the active line (and maybe one neighbor)
         context_lines = 0
@@ -7853,7 +7873,7 @@ def main():
                         _rebake_cover = COVER_CORNER_RADIUS != _prev_cover_radius
                         # live.stop()/clear wipes Kitty's graphics layer, so
                         # re-place the cover art if we had one showing
-                        # (dock layout puts it at the bottom)
+                        # (dock interface puts it at the bottom)
                         if not COVER_ENABLED:
                             # cover art switched off in settings
                             cover_path = None
