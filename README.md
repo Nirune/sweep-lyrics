@@ -1,8 +1,6 @@
 # Sweep Lyrics
 
-Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPRIS and sweeps a soft-edged highlight across each word as it is sung.
-
-
+Synced karaoke lyrics for the kitty terminal. Sweep Lyrics follows the MPRIS track and wipes a soft-edged highlight across each word in time with the vocal.
 
 ## 🎥 Preview
 
@@ -16,56 +14,63 @@ Synced karaoke lyrics for the kitty terminal. Follows the track playing over MPR
 
 ## ✨ Features
 
-- Word-level karaoke wipe with a soft edge, with per-syllable timing estimated and calibrated per song
-- Several lyrics sources raced in parallel: Better Lyrics, Unison, LyricsPlus, KuGou, LRCLIB, YouTube Music
-- Per-word display mode (on by default) or classic full-lyrics view, live translation, romanization
-- Shazam mode: identify the track that is actually playing and sync to it
-- Highlight color follows your kitty theme
+- Word-level karaoke wipe with a soft edge. Sweep Lyrics estimates syllable timing and calibrates it per song.
+- Parallel lookup across Better Lyrics, Unison, LyricsPlus, KuGou, LRCLIB, and YouTube Music. Sweep Lyrics uses the first response.
+- Per-word display (on by default) or the full lyric view, plus translation and romanization.
+- Shazam mode: identify the track you hear and sync to it.
+- Highlight color from your kitty theme.
 
 ## 📦 Install
 
-One command. It installs the system dependencies for Arch, Debian/Ubuntu and Fedora families, then installs Sweep Lyrics with pipx:
+This command installs the system packages on Arch, Debian/Ubuntu, and Fedora, then installs Sweep Lyrics with pipx:
 
-    curl -fsSL https://raw.githubusercontent.com/Nirune/sweep-lyrics/main/install.sh | bash
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nirune/sweep-lyrics/main/install.sh | bash
+```
 
-Prefer to read it first: [install.sh](install.sh). Pass `--no-optional` to skip the optional packages.
+Read [install.sh](install.sh) before you run it. Pass `--no-optional` to skip the optional packages.
 
-Open a new shell afterwards so `~/.local/bin` is on your `PATH`.
+Open a new shell so `~/.local/bin` is on your `PATH`.
 
 ### 🛠️ Manual install
 
-Install the required packages for your distro, then Sweep Lyrics itself:
+Install the packages for your distro, then Sweep Lyrics:
 
-    # Arch based
-    sudo pacman -S python-pipx kitty playerctl
+```bash
+# Arch based
+sudo pacman -S python-pipx kitty playerctl
 
-    # Debian / Ubuntu
-    sudo apt install pipx kitty playerctl
+# Debian / Ubuntu
+sudo apt install pipx kitty playerctl
 
-    pipx ensurepath
-    pipx install git+https://github.com/Nirune/sweep-lyrics
+pipx ensurepath
+pipx install git+https://github.com/Nirune/sweep-lyrics
+```
 
-Optional extras (Japanese romanization, pronunciation dictionary):
+Japanese romanization and the pronunciation dictionary:
 
-    pipx inject sweep-lyrics pykakasi cmudict
+```bash
+pipx inject sweep-lyrics pykakasi cmudict
+```
 
 ## 📋 Requirements
 
 Required:
 
-- Python 3.10 or newer (developed on 3.14)
+- Python 3.10 or newer. I develop on 3.14.
 - kitty terminal
 - An MPRIS player and `playerctl`
 
-Optional (detected at runtime):
+Optional. Sweep Lyrics detects these at runtime:
 
 - `songrec`: Shazam mode (key `s`)
-- `parec` or `pw-record` (`libpulse` / `pipewire`): audio capture for Shazam and sync
-- `notify-send` (`libnotify`): desktop notification when Shazam identifies a song
+- `parec` or `pw-record` (`libpulse` / `pipewire`): capture audio for Shazam and sync
+- `notify-send` (`libnotify`): desktop notification after Shazam identifies a song
 - `fc-match` (fontconfig): locates a bold sans-serif font file
-- `niri` or `xdotool`: focused-window lookup on niri / X11, used to pick the matching player (falls back to the first playing one)
+- `niri` or `xdotool`: find the focused window on niri or X11 so Sweep Lyrics can follow that player. Without them it follows the first player that is playing.
 
 ## 🎵 Supported players
+
 Sweep Lyrics follows any player that exposes MPRIS and shows up in `playerctl`. Tested with:
 
 - Spotify
@@ -73,11 +78,13 @@ Sweep Lyrics follows any player that exposes MPRIS and shows up in `playerctl`. 
 - mpv (with the `mpv-mpris` plugin)
 - YouTube Music or Spotify in the browser
 
-Not sure whether yours is detected? Run `playerctl -l`. If it is listed, Sweep Lyrics can follow it. With several players running, press `p` to switch between them.
+Run `playerctl -l`. If your player is listed, Sweep Lyrics can follow it. Press `p` to cycle players when more than one is running.
 
 ## ⌨️ Usage
 
-    sweeplyrics
+```bash
+sweeplyrics
+```
 
 Keys:
 
@@ -89,77 +96,75 @@ Keys:
 - `z` minimal mode (hides everything except play/pause and the progress bar)
 - `m` search
 - `f` alternate LRC
-- `p` cycle to the next MPRIS player (when more than one is running)
+- `p` cycle to the next MPRIS player
 - `s` Shazam mode (identify the playing track), `b` to leave it
 - `h` Shazam identification history
-- `[` / `]` shift sync earlier / later, remembered per track
+- `[` / `]` shift sync earlier / later, saved per track
 - `r` reset the sync offset
 - `d` debug
 - `o` settings
-- `?` or `/` show all key bindings
+- `?` or `/` show the key bindings
 - `q` quit
 
-### Lyric Animations
+### Lyric animations
 
-Sweep Lyrics supports switchable lyric animations:
+Pick a lyric animation:
 
 | Animation | Description |
 |-----------|-------------|
-| `wipe` | Classic left-to-right karaoke wipe (default) |
-| `dot` | One `●` that rests just above the sung word and arcs up in a fixed 2-row lane before each jump (1 row on very short terminals) |
-| `bounce` | The sung word itself hops up into a 1-row lane above the lyric line and lands back down as the word is held |
-| `none` | Static highlight, no animation |
+| `wipe` | Left-to-right karaoke wipe (default) |
+| `dot` | One `●` sits above the sung word and arcs through a 2-row lane before each jump (1 row on a short terminal) |
+| `bounce` | The sung word hops into a 1-row lane above the line, then lands as you hold the word |
+| `none` | Static highlight |
 
-**Environment variable**: Set `SWEEP_ANIMATION=wipe`, `SWEEP_ANIMATION=dot`, `SWEEP_ANIMATION=bounce`, or `SWEEP_ANIMATION=none` before running.
+Set `SWEEP_ANIMATION` to `wipe`, `dot`, `bounce`, or `none` before you start. That choice lasts for this run.
 
-**Settings**: Open settings (`o`) → **Lyric animation** → "Lyric style", then `←`/`→` to change it. **Layout → Mode** picks the lyric arrangement (classic / bait / timeline / hud / split); **Interface → Mode** switches the global chrome between the standard footer + left cover (`standard`) and the bottom info strip (`dock`). All settings (the animation choice, per-word mode, etc.) are saved as their name/value and persist between runs, so anything you toggle stays as you left it. The active style also shows in the footer (e.g., `anim:dot`) when it isn't the default.
+In settings (`o`), open **Lyric animation → Lyric style** and press `←` / `→`. **Layout → Mode** sets the arrangement: classic, bait, timeline, hud, or split. **Interface → Mode** switches the chrome: `standard` keeps the footer and the left cover, `dock` uses a bottom info strip.
+
+Sweep Lyrics saves each setting by name and loads it on the next run. You see the active style in the footer, such as `anim:dot`, unless you left it on `wipe`.
 
 ## 🗑️ Uninstall
-
-To remove the app:
 
 ```bash
 pipx uninstall sweep-lyrics
 ```
 
-To remove all cached data (lyrics history, Shazam results, etc.):
+Lyrics history and Shazam results live in `~/.cache/sweep-lyrics`:
 
 ```bash
 rm -rf ~/.cache/sweep-lyrics
 ```
 
-
 ## ⚙️ Environment variables
 
-- `SWEEP_ANIMATION`: Lyric animation style (`wipe`, `dot`, `bounce`, `none`). Defaults to `wipe`. Invalid values fall back to default.
-- `SWEEP_SHAZAM_DEVICE`: audio source used for Shazam and sync. Defaults to the monitor of your current default sink (via `pactl`); set it if you want a specific one, e.g. `SWEEP_SHAZAM_DEVICE=alsa_output.xyz.monitor`
-- `SWEEP_IMG_SMOOTH`
-- `SWEEP_SMOOTH`
-- `SWEEP_WINDOW`
-- `SWEEP_WORD_WIPE_SOFT`
+- `SWEEP_ANIMATION`: lyric animation (`wipe`, `dot`, `bounce`, `none`). Default `wipe`. Other values use `wipe`.
+- `SWEEP_SHAZAM_DEVICE`: audio source for Shazam and sync. Default is the monitor of your current sink, from `pactl`. Example: `SWEEP_SHAZAM_DEVICE=alsa_output.xyz.monitor`
+- `SWEEP_SMOOTH`: set to `0` for a hard karaoke cut. Default feathers the edge.
+- `SWEEP_WORD_WIPE_SOFT`: set to `0` for a hard per-word wipe. Default feathers the edge.
+- `SWEEP_IMG_SMOOTH`: set to `0` to turn off the soft edge on the kitty image wipe. Default feathers it.
 
 ## ⚠️ Disclaimer
 
-Lyrics are fetched at runtime from third-party services and are never bundled with this project. Several of those services expose unofficial or undocumented APIs, so lookups can break at any time and their terms of service may not allow this kind of use. Lyrics remain the property of their rights holders. Use at your own risk.
+Sweep Lyrics fetches lyrics at runtime from third-party services and does not bundle them. Several of those services expose unofficial or undocumented APIs, so a lookup can break and their terms may forbid this use. Rights holders keep the lyrics. You use this at your own risk.
 
 ## 🙏 Acknowledgements
 
-Sweep Lyrics ships without any lyrics. Everything is fetched live from the services below, and the lyrics stay with their owners.
+Sweep Lyrics ships without lyrics. Each request pulls them live from the services below, and the lyrics stay with their owners.
 
 - [LRCLIB](https://lrclib.net): free, open synced-lyrics database
-- Better Lyrics, Unison, LyricsPlus, KuGou and YouTube Music: additional lyric sources, through their unofficial public endpoints
+- Better Lyrics, Unison, LyricsPlus, KuGou, and YouTube Music: extra sources, through unofficial public endpoints
 - [songrec](https://github.com/marin-m/SongRec): Shazam-based track identification
 - [playerctl](https://github.com/altdesktop/playerctl): MPRIS control
-- [Rich](https://github.com/Textualize/rich), [pykakasi](https://github.com/miurahr/pykakasi), [cmudict](https://github.com/prosegrinder/python-cmudict): rendering, Japanese romanization and pronunciation data, each under its own license
-- [Dux Shell](https://github.com/duxlabs-dev/dux-shell) (MIT): inspiration for the multi-provider lookup and the soft-edge wipe
+- [Rich](https://github.com/Textualize/rich), [pykakasi](https://github.com/miurahr/pykakasi), [cmudict](https://github.com/prosegrinder/python-cmudict): rendering, Japanese romanization, and pronunciation data, each under its own license
+- [Dux Shell](https://github.com/duxlabs-dev/dux-shell) (MIT): the multi-provider lookup and the soft-edge wipe started here
 
-Several of these are unofficial endpoints that may break without notice. None of the services named here are affiliated with Sweep Lyrics.
+Those endpoints are unofficial and can break. None of these services are affiliated with Sweep Lyrics.
 
 ## 👤 Author
 
-Made by [@Nirune](https://github.com/Nirune).
+[@Nirune](https://github.com/Nirune).
 
-AI tools helped along the way: Claude (Anthropic), ChatGPT (OpenAI) and Grok (xAI, for the UI design). I decide what ships and I test it myself.
+Claude (Anthropic), ChatGPT (OpenAI), and Grok (xAI, for the UI) helped. I decide what ships, and I test it myself.
 
 ## 📄 License
 
