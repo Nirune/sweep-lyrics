@@ -5902,14 +5902,11 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                         Text("install songrec for auto song identify", style="dim", justify="center")
                     )
             else:
-                # Waveform spectrum visual for "no lyrics found"
-                wave_top = "▁▂▃▄▅▆▇█▆▅▄▃▂▁"
-                wave_bottom = "▁▂▃▄▅▆▇█▆▅▄▃▂▁"
-                body_lines.append(Text(wave_top, style=f"dim {info_accent_hex}", justify="center"))
-                body_lines.append(
-                    Text("█  no lyrics found  █", style=f"bold {info_accent_hex}", justify="center")
-                )
-                body_lines.append(Text(wave_bottom, style=f"dim {info_accent_hex}", justify="center"))
+                # "no lyrics found" with enhanced visual styling
+                no_lyrics_text = Text("no lyrics found", style=f"bold {info_accent_hex}", justify="center")
+                body_lines.append(Text(""))
+                body_lines.append(no_lyrics_text)
+                body_lines.append(Text(""))
                 if shazam_hint:
                     body_lines.append(
                         Text("try  s  identify  ·  m  search", style="dim", justify="center")
