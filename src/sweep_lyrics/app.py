@@ -5500,6 +5500,11 @@ def _apply_font_setting(font_name):
             stderr=subprocess.DEVNULL,
             timeout=2.0,
         )
+        # After font change, force terminal to recalculate size by sending
+        # SIGWINCH (window change signal). This makes rich re-query terminal
+        # dimensions so layouts don't break.
+        import signal
+        os.kill(os.getpid(), signal.SIGWINCH)
     except Exception:
         pass  # Socket not available or kitty @ failed; file edit is enough
     
