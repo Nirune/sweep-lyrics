@@ -3294,8 +3294,8 @@ def show_settings(live, settings):
                 if font_changed:
                     # Render once more so user sees the restart hint
                     _render()
-                    # Wait for user to press a key to acknowledge
-                    poll_key(0)
+                    # Wait for user to press a key to acknowledge (60s timeout)
+                    poll_key(60)
                 break
             if ch == "up":
                 cursor["items"] = (cursor["items"] - 1) % n_items
