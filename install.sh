@@ -30,8 +30,10 @@ case "$FAMILY" in
   arch)
     REQUIRED=(python-pipx kitty playerctl)
     OPTIONAL_PKGS=(libpulse libnotify)
+    FONT_PKGS=(ttf-jetbrains-mono-nerd ttf-fira-code ttf-meslo-nerd ttf-fantasque-nerd)
     $SUDO pacman -S --needed --noconfirm "${REQUIRED[@]}"
     (( OPTIONAL )) && $SUDO pacman -S --needed --noconfirm "${OPTIONAL_PKGS[@]}"
+    (( OPTIONAL )) && $SUDO pacman -S --needed --noconfirm "${FONT_PKGS[@]}"
     if (( OPTIONAL )) && ! have songrec; then
       if pacman -Si songrec >/dev/null 2>&1; then
         $SUDO pacman -S --needed --noconfirm songrec
