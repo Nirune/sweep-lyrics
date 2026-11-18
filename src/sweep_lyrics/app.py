@@ -2715,7 +2715,7 @@ _SETTINGS_CATEGORIES = [
         ("show_instrumental",    "Show instrumental icon",   "bool",  True,  None, None, None),
         ("panel_corners",        "Panel corners",            "int",   0,    0,     3,    1),
         ("translate_lang",       "Translation language",     "int",   0,    0,     17,   1),
-        ("font",                 "Terminal font",            "int",   0,    0,     4,    1),
+        ("font",                 "Terminal font",            "int",   0,    0,     3,    1),
     ]),
     ("cover", "Cover", [
         ("show_cover",           "Show cover art",           "bool",  True,  None, None, None),
@@ -5465,11 +5465,10 @@ INTERLUDE_LANE_BLANK = "\u2800"
 # Fonts so braille (U+2800), dots (U+25CF) and other symbols render
 # correctly. The user can always override this in kitty.conf directly.
 FONT_NAMES = (
-    "JetBrains Mono Nerd Font",
-    "Fira Code Nerd Font",
-    "Hack Nerd Font",
-    "Source Code Pro Nerd Font",
-    "Meslo Nerd Font",
+    "JetBrainsMono Nerd Font",
+    "FiraCode Nerd Font",
+    "MesloLGL Nerd Font",
+    "FantasqueSansM Nerd Font",
 )
 FONT_DEFAULT = 0
 _FONT_SET_CMD = ("kitty", "@", "set-font")
