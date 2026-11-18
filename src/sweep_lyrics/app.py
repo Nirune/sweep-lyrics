@@ -3291,6 +3291,10 @@ def show_settings(live, settings):
                 apply_settings(settings)
                 save_settings(settings)
                 applied = True
+                if font_changed:
+                    # Render once more so user sees the restart hint before exiting
+                    _render()
+                    poll_key(2)  # Wait 2 seconds for user to read it
                 break
             if ch == "up":
                 cursor["items"] = (cursor["items"] - 1) % n_items
