@@ -2715,6 +2715,7 @@ _SETTINGS_CATEGORIES = [
         ("show_instrumental",    "Show instrumental icon",   "bool",  True,  None, None, None),
         ("panel_corners",        "Panel corners",            "int",   0,    0,     3,    1),
         ("translate_lang",       "Translation language",     "int",   0,    0,     17,   1),
+        ("font",                 "Terminal font",            "int",   0,    0,     4,    1),
     ]),
     ("cover", "Cover", [
         ("show_cover",           "Show cover art",           "bool",  True,  None, None, None),
@@ -2740,7 +2741,7 @@ _SETTINGS_BLURBS = {
     "layout": "mode and per-word look",
     "interface": "footer + left cover · dock = bottom strip",
     "animation": "lyric style (wipe / dot / bounce / none)",
-    "display": "context lines, panel border",
+    "display": "context lines, panel border, terminal font",
     "cover": "art size, corners, accent",
     "advanced": "wipe timing, onset, sync",
     "per_word": "adlib and backing vocal options",
@@ -2814,7 +2815,7 @@ def apply_settings(s):
     global SHOW_ADLIB
     global UI_ACCENT_FADE
     global COVER_CORNER_RADIUS, COVER_COLS, COVER_ROWS, COVER_GUTTER, PANEL_BOX
-    global TRANSLATE_TARGET_LANG
+    global TRANSLATE_TARGET_LANG, FONT_HINT
     KARAOKE_LEAD = float(s.get("karaoke_lead", 0.6))
     KARAOKE_HOLD_MAX = float(s.get("karaoke_hold_max", 3.0))
     # SWEEP_ANIMATION wins over the saved choice for this run only; it is
@@ -2894,6 +2895,29 @@ def apply_settings(s):
     except (TypeError, ValueError):
         _tl_idx = 0
     TRANSLATE_TARGET_LANG = TRANSLATE_LANGS[_tl_idx][0]
+
+    # Try switching the terminal font at runtime (kitty only). The hint is
+    # shown in the settings panel so the user knows what happened.
+    try:
+        _font_idx = max(0, min(len(FONT_NAMES) - 1, int(s.get("font", FONT_DEFAULT))))
+    except (TypeError, ValueError):
+        _font_idx = FONT_DEFAULT
+    FONT_HINT = None
+    try:
+        subprocess.run(
+            list(_FONT_SET_CMD) + [FONT_NAMES[_font_idx]],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        # Not kitty, kitty @ not available, or the switch failed. The user
+        # needs to edit kitty.conf manually.
+        FONT_HINT = (
+            f"Could not switch to {FONT_NAMES[_font_idx]} at runtime. "
+            "Set it in kitty.conf instead."
+        )
 
 
 LAYOUT_MODE = 0  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 split
@@ -3048,6 +3072,11 @@ def show_settings(live, settings):
                 return names[int(val)]
             except (TypeError, ValueError, IndexError):
                 return names[0]
+        if key == "font":
+            try:
+                return FONT_NAMES[int(val)]
+            except (TypeError, ValueError, IndexError):
+                return FONT_NAMES[FONT_DEFAULT]
         if typ == "bool":
             return "on" if val else "off"
         if typ == "float":
@@ -3166,7 +3195,9 @@ def show_settings(live, settings):
             body = _items_table(items)
             key, _label, typ, default, lo, hi, step = items[cursor["items"]]
             tip = tips.get(key, "")
-            if not tip and typ != "bool" and lo is not None and hi is not None:
+            if key == "font" and FONT_HINT:
+                tip = FONT_HINT
+            elif not tip and typ != "bool" and lo is not None and hi is not None:
                 tip = (
                     f"{lo} … {hi}  ·  step {step}  ·  "
                     f"default {_fmt(default, typ, key=key)}"
@@ -5427,6 +5458,24 @@ INTERLUDE_SPLIT_DELAY = 1.5  # seconds into a gap before the single dot splits
 # table cell rstrips whitespace and would shift the row). U+2800 is an
 # invisible braille cell: one column wide, not whitespace.
 INTERLUDE_LANE_BLANK = "\u2800"
+
+
+# ---- Terminal font ------------------------------------------------------
+# Fonts sweep-lyrics can ask kitty to switch to at runtime. All are Nerd
+# Fonts so braille (U+2800), dots (U+25CF) and other symbols render
+# correctly. The user can always override this in kitty.conf directly.
+FONT_NAMES = (
+    "JetBrains Mono Nerd Font",
+    "Fira Code Nerd Font",
+    "Hack Nerd Font",
+    "Source Code Pro Nerd Font",
+    "Meslo Nerd Font",
+)
+FONT_DEFAULT = 0
+_FONT_SET_CMD = ("kitty", "@", "set-font")
+# Human-readable hint when the runtime font switch couldn't happen (None on
+# success). Shown in the settings panel so the user knows to edit kitty.conf.
+FONT_HINT = None
 
 
 def interlude_hop_phase(t, hz=INTERLUDE_HOP_HZ):
