@@ -2896,28 +2896,14 @@ def apply_settings(s):
         _tl_idx = 0
     TRANSLATE_TARGET_LANG = TRANSLATE_LANGS[_tl_idx][0]
 
-    # Try switching the terminal font at runtime (kitty only). The hint is
+    # Try switching the terminal font by editing kitty.conf directly, then
+    # trigger reload via kitty @ if the socket is available. The hint is
     # shown in the settings panel so the user knows what happened.
     try:
         _font_idx = max(0, min(len(FONT_NAMES) - 1, int(s.get("font", FONT_DEFAULT))))
     except (TypeError, ValueError):
         _font_idx = FONT_DEFAULT
-    FONT_HINT = None
-    try:
-        subprocess.run(
-            list(_FONT_SET_CMD) + [FONT_NAMES[_font_idx]],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=2.0,
-        )
-    except (FileNotFoundError, subprocess.SubprocessError, OSError):
-        # Not kitty, kitty @ not available, or the switch failed. The user
-        # needs to edit kitty.conf manually.
-        FONT_HINT = (
-            f"Could not switch to {FONT_NAMES[_font_idx]} at runtime. "
-            "Set it in kitty.conf instead."
-        )
+    FONT_HINT = _apply_font_setting(FONT_NAMES[_font_idx])
 
 
 LAYOUT_MODE = 0  # 0 classic · 1 bait · 2 timeline · 3 hud · 4 split
@@ -5476,6 +5462,48 @@ _FONT_SET_CMD = ("kitty", "@", "set-font")
 # success). Shown in the settings panel so the user knows to edit kitty.conf.
 FONT_HINT = None
 
+
+def _apply_font_setting(font_name):
+    """Update font_family in kitty.conf and trigger reload.
+    
+    Tries to edit the file directly, then signals kitty to reload if the
+    socket is available. Falls back gracefully if kitty.conf doesn't exist
+    or the socket is unreachable.
+    """
+    kitty_conf = Path.home() / ".config" / "kitty" / "kitty.conf"
+    if not kitty_conf.exists():
+        return f"kitty.conf not found at {kitty_conf}"
+    
+    try:
+        text = kitty_conf.read_text()
+        # Replace the font_family line; if it doesn't exist, add it after the
+        # Configuration header.
+        import re
+        pattern = r'^font_family\s+.*$'
+        if re.search(pattern, text, re.MULTILINE):
+            text = re.sub(pattern, f'font_family                 {font_name}',
+                          text, flags=re.MULTILINE)
+        else:
+            # Add after "# Configuration" header if present
+            text = text.replace('# Configuration\n',
+                                f'# Configuration\nfont_family                 {font_name}\n')
+        kitty_conf.write_text(text)
+    except Exception as e:
+        return f"Could not edit kitty.conf: {e}"
+    
+    # Try to reload kitty config via socket (silent fail if unavailable)
+    try:
+        subprocess.run(
+            ("kitty", "@", "load-config"),
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2.0,
+        )
+    except Exception:
+        pass  # Socket not available or kitty @ failed; file edit is enough
+    
+    return None
 
 def interlude_hop_phase(t, hz=INTERLUDE_HOP_HZ):
     """Hop curve 0..1 at time ``t``: 0 at the bottom, 1 at the peak.
