@@ -253,14 +253,33 @@ class BouncingDot(LyricAnimation):
         return col, dot_subrow(state, lane_rows)
 
     # ---- frame ------------------------------------------------------
+    def _styled_line(self, state: AnimState) -> Text:
+        """Karaoke colour progress for the lyric row.
+
+        Every word up to and including the active one has had its onset, so
+        it keeps the accent colour like a progress marker; the words after it
+        stay white until their turn. Before the first onset (or when the line
+        has no word data) the whole row is plain white.
+        """
+        text = state.line_text
+        if not state.words or state.word_idx < 0:
+            return self.plain(text)
+        active = min(state.word_idx, len(state.words) - 1)
+        end = state.words[active].char_to
+        line = Text()
+        line.append(text[:end], style=f"bold {state.accent_hex}")
+        line.append(text[end:], style="bold white")
+        return line
+
     def render(self, state: AnimState) -> AnimFrame:
         """Render the lane rows above the lyric line.
 
-        The line itself is left to the caller (plain highlight, no wipe): the
-        dot style is a pointer, not a sweep.
+        The line itself is pointer-free (no wipe): words up to the active one
+        are accent, the rest stay white. The dot style is a pointer, not a
+        sweep.
         """
         lane_rows = self.lane_rows(state)
-        return AnimFrame(self.plain(state.line_text),
+        return AnimFrame(self._styled_line(state),
                          self.lane(state, lane_rows))
 
     def lane(self, state: AnimState, lane_rows: Optional[int] = None) -> list[Text]:

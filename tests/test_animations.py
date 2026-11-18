@@ -297,6 +297,43 @@ class TestBouncingDot(unittest.TestCase):
         self.assertTrue(0 <= col <= 4, f"dot escaped the active word: {col}")
         self.assertEqual(row, DOT_LANE_ROWS - 1)
 
+    def test_line_follows_karaoke_progress(self):
+        # The row is a progress marker, not a static highlight: words up to
+        # and including the active one are accent, the rest stay white until
+        # their onset. This mirrors the WordBounce behaviour.
+        spans = (WordSpan(0.0, 0.4, "hello", 0, 5),
+                 WordSpan(0.5, 0.9, "big", 6, 9),
+                 WordSpan(1.0, 1.4, "world", 10, 15))
+        text = "hello big world"
+        dot = BouncingDot()
+        accent = "bold #00e5ff"
+
+        line = dot.render(_mk_state(text, spans, word_idx=-1,
+                                    sync_pos=-0.1)).line
+        self.assertEqual(_style_at(line, 0), "bold white")
+        self.assertEqual(_style_at(line, 6), "bold white")
+        self.assertEqual(_style_at(line, 10), "bold white")
+
+        line = dot.render(_mk_state(text, spans, word_idx=0,
+                                    sync_pos=0.1)).line
+        self.assertEqual(_style_at(line, 0), accent)
+        self.assertEqual(_style_at(line, 6), "bold white")
+        self.assertEqual(_style_at(line, 10), "bold white")
+
+        line = dot.render(_mk_state(text, spans, word_idx=1,
+                                    sync_pos=0.6)).line
+        self.assertEqual(_style_at(line, 0), accent)
+        self.assertEqual(_style_at(line, 6), accent)
+        self.assertEqual(_style_at(line, 10), "bold white")
+
+        line = dot.render(_mk_state(text, spans, word_idx=2,
+                                    sync_pos=1.1)).line
+        self.assertEqual(_style_at(line, 10), accent)
+
+    def test_line_without_word_data_stays_white(self):
+        frame = BouncingDot().render(_no_word_state())
+        self.assertEqual(_style_at(frame.line, 0), "bold white")
+
     def test_one_dot_row_even_at_the_lane_top(self):
         start, end = arc_window(_two_word_state(word_idx=0, sync_pos=10.1))
         state = _two_word_state(word_idx=0, sync_pos=(start + end) / 2)
@@ -415,6 +452,14 @@ def _mk_state(text, spans, *, word_idx, sync_pos, word_cols=None,
         word_progress=0.5, next_onset=next_onset, time_to_next=time_to_next,
         width=width, height=24, line_cols=line_cols, word_cols=tuple(word_cols),
     )
+
+
+def _style_at(line, offset):
+    """Style string in effect at a character offset of a rich ``Text``."""
+    for span in line.spans:
+        if span.start <= offset < span.end:
+            return str(span.style)
+    return str(line.style)
 
 
 class TestLineLayout(unittest.TestCase):
