@@ -2982,6 +2982,7 @@ def show_settings(live, settings):
     cursor = {"top": 0, "adv": 0, "items": 0}
     cat_key = None
     back_to = "top"
+    font_changed = False
 
     tips = {
         "animation": "lyric style — " + " / ".join(ANIMATION_NAMES),
@@ -3193,6 +3194,8 @@ def show_settings(live, settings):
         status = Text(" ")
         if level == "items" and _any_dirty():
             status = Text("* unsaved · enter saves", style="yellow")
+        elif font_changed:
+            status = Text("✓ Font updated · restart sweep-lyrics to apply", style="green")
 
         panel = Panel(
             Group(
@@ -3282,6 +3285,7 @@ def show_settings(live, settings):
                 level = back_to
                 continue
             if ch == "enter":
+                font_changed = draft.get("font") != settings.get("font")
                 settings.clear()
                 settings.update(draft)
                 apply_settings(settings)
