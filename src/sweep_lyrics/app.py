@@ -3195,7 +3195,7 @@ def show_settings(live, settings):
         if level == "items" and _any_dirty():
             status = Text("* unsaved · enter saves", style="yellow")
         elif font_changed:
-            status = Text("✓ Font updated · restart sweep-lyrics to apply", style="green")
+            status = Text("✓ Font updated · restart sweep-lyrics to apply", style="red")
 
         panel = Panel(
             Group(
@@ -3292,9 +3292,10 @@ def show_settings(live, settings):
                 save_settings(settings)
                 applied = True
                 if font_changed:
-                    # Render once more so user sees the restart hint before exiting
+                    # Render once more so user sees the restart hint
                     _render()
-                    poll_key(2)  # Wait 2 seconds for user to read it
+                    # Wait for user to press a key to acknowledge
+                    poll_key(0)
                 break
             if ch == "up":
                 cursor["items"] = (cursor["items"] - 1) % n_items
