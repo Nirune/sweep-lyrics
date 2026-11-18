@@ -3588,6 +3588,76 @@ _AMBIENT_GLYPHS = " .·∘○◦°"  # sparse -> denser, used for the instrument
                               # ambient pattern below
 
 
+def render_spectrum_bar(pos, width, height, color):
+    """Animated spectrum bar for "no lyrics found" state.
+    Two mirrored rows forming single waveform (top peaks up, bottom peaks down).
+    Columns spaced, height envelope (high center, low edges) + smooth animation.
+    Color from info_accent_hex, dim blend at edges."""
+    _SPECTRUM_UP = "▁▂▃▄▅▆▇█"      # peaks up
+    _SPECTRUM_DOWN = "█▇▆▅▄▃▂▁"    # peaks down (mirrored)
+    
+    # Calculate columns with spacing
+    num_cols = (width + 1) // 2
+    if num_cols < 1:
+        num_cols = 1
+    
+    lines = []
+    
+    # Top row: peaks up
+    top = Text()
+    for col in range(num_cols):
+        col_norm = (col / max(1, num_cols - 1)) * 2 - 1 if num_cols > 1 else 0
+        center_dist = abs(col_norm)
+        
+        # Envelope: high center, low edges
+        envelope = max(0.0, 1.0 - center_dist * 1.2)
+        
+        # Smooth animation per column
+        anim = math.sin(pos * 1.2 + col * 0.3) * 0.3 + 0.5
+        level = max(0.0, min(1.0, envelope * anim))
+        idx = int(level * (len(_SPECTRUM_UP) - 1))
+        
+        # Color: bright center, dim edges
+        if center_dist > 0.6:
+            # Dim blend: use "dim" style for edge
+            style = f"dim {color}"
+        else:
+            style = color
+        
+        top.append(_SPECTRUM_UP[idx], style=style)
+        if col < num_cols - 1:
+            top.append(" ")
+    
+    lines.append(top)
+    
+    # Bottom row: mirrored (same phase, inverted characters)
+    if height >= 2:
+        bottom = Text()
+        for col in range(num_cols):
+            col_norm = (col / max(1, num_cols - 1)) * 2 - 1 if num_cols > 1 else 0
+            center_dist = abs(col_norm)
+            
+            # Same envelope and animation phase as top
+            envelope = max(0.0, 1.0 - center_dist * 1.2)
+            anim = math.sin(pos * 1.2 + col * 0.3) * 0.3 + 0.5
+            level = max(0.0, min(1.0, envelope * anim))
+            idx = int(level * (len(_SPECTRUM_DOWN) - 1))
+            
+            # Same color logic
+            if center_dist > 0.6:
+                style = f"dim {color}"
+            else:
+                style = color
+            
+            bottom.append(_SPECTRUM_DOWN[idx], style=style)
+            if col < num_cols - 1:
+                bottom.append(" ")
+        
+        lines.append(bottom)
+    
+    return lines
+
+
 def render_ambient_pattern(pos, width, height, color):
     """Slow drifting wave pattern for tracks with no lyrics at all — no
     audio access needed, just `pos` (elapsed playback seconds) driving
@@ -5919,7 +5989,8 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             body_lines.append(Text(""))
             pattern_width = max(10, min(panel_width - 4, 60))
             pattern_height = max(3, min(available - 4, 8))
-            for row_text in render_ambient_pattern(pos, pattern_width, pattern_height, info_accent_hex):
+            # Use spectrum bar for "no lyrics found" state
+            for row_text in render_spectrum_bar(pos, pattern_width, pattern_height, info_accent_hex):
                 row_text.justify = "center"
                 body_lines.append(row_text)
     else:
