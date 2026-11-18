@@ -78,7 +78,7 @@ DOT_LANE_FULL_MIN_HEIGHT = 8
 
 SUBPIXELS_PER_ROW = 4      # braille grid: 4 vertical subrows per terminal row
 DOT_HEIGHT_SUBROWS = 1     # the dot occupies this many subrows (clamp reserve)
-DOT_BOB_SUBROWS = 1        # gentle bob amplitude while a word is held
+DOT_BOB_SUBROWS = 4        # bob amplitude across terminal rows while holding a word
 BOB_HZ = 1.2               # bobs per second while holding a word
 ARC_SEC = 0.24             # longest jump toward the next word (s)
 ARC_LEAD = 0.04            # land this long before the next word's onset

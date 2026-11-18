@@ -164,17 +164,14 @@ class TestDotLaneGeometry(unittest.TestCase):
 class TestDotRestAndArc(unittest.TestCase):
     """Rest on the bottom subrows; the lane top is only for the jump."""
 
-    def test_rests_on_the_bottom_subrows_while_singing(self):
+    def test_bobs_across_lane_rows_while_singing(self):
         rest = max_subrow(DOT_LANE_ROWS)
         start, _ = arc_window(_two_word_state(word_idx=0, sync_pos=10.1))
-        for pos in (10.05, 10.1, start - 0.01):
-            y = dot_subrow(_two_word_state(word_idx=0, sync_pos=pos))
-            self.assertGreaterEqual(y, rest - DOT_BOB_SUBROWS)
-            self.assertLessEqual(y, rest)
-            # A full-cell glyph can only land on a terminal row: rest is the
-            # lane's bottom row (immediately above the lyric line), never the
-            # top row.
-            self.assertEqual(y // SUBPIXELS_PER_ROW, DOT_LANE_ROWS - 1)
+        # With amplitude 4, the bob reaches across terminal rows (row 0 and row 1)
+        subrows = [dot_subrow(_two_word_state(word_idx=0, sync_pos=10.0 + i * 0.1))
+                   for i in range(10)]
+        rows_visited = {y // SUBPIXELS_PER_ROW for y in subrows}
+        self.assertGreater(len(rows_visited), 1)
 
     def test_arc_reaches_the_lane_top_only_in_the_gap(self):
         start, end = arc_window(_two_word_state(word_idx=0, sync_pos=10.1))
