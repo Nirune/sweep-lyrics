@@ -2706,6 +2706,10 @@ _SETTINGS_CATEGORIES = [
         ("global_offset_step",   "Offset step (s)",          "float", 0.10, 0.05,  1.0,  0.05),
         ("shazam_offset_fudge",  "Shazam fudge (s)",         "float", 2.0,  0.0,   6.0,  0.25),
     ]),
+    ("transitions", "Transitions", [
+        ("chrome_transitions",   "Style",                    "int",  1,    0,     2,    1),
+        ("transition_duration",  "Duration (ms)",            "int",  250,  0,     500,  50),
+    ]),
     ("display", "Display", [
         ("context_lines",        "Context lines (min)",      "int",   3,    1,     9,    1),
         ("show_instrumental",    "Show instrumental icon",   "bool",  True,  None, None, None),
@@ -2731,7 +2735,7 @@ _SETTINGS_SCHEMA = [item for _, _, items in _SETTINGS_CATEGORIES for item in ite
 # "advanced" is a group: it opens a submenu of the categories listed in
 # _SETTINGS_ADVANCED instead of an item list.
 _SETTINGS_TOP = ["layout", "interface", "animation", "display", "cover", "advanced"]
-_SETTINGS_ADVANCED = ["per_word", "karaoke", "onset", "sync"]
+_SETTINGS_ADVANCED = ["per_word", "karaoke", "onset", "sync", "transitions"]
 _SETTINGS_BLURBS = {
     "layout": "mode and per-word look",
     "interface": "footer + left cover · dock = bottom strip",
@@ -2743,6 +2747,7 @@ _SETTINGS_BLURBS = {
     "karaoke": "wipe timing and easing",
     "onset": "audio onset snapping",
     "sync": "offset step, shazam lag",
+    "transitions": "chrome animation (fade / slide)",
 }
 _SETTINGS_BY_KEY = {k: (label, items) for k, label, items in _SETTINGS_CATEGORIES}
 
@@ -2990,6 +2995,8 @@ def show_settings(live, settings):
         "onset_blend": "0 = pure syllable  ·  1 = fully snap to onsets",
         "onset_silence_rms": "raise if wipe freezes too often on quiet parts",
         "shazam_offset_fudge": "extra lag compensation after SongRec match",
+        "chrome_transitions": "0=off · 1=fade · 2=fade+slide (track changes)",
+        "transition_duration": "how long the transition animation lasts",
     }
     menu_tips = {"advanced": "tuning knobs, safe to leave alone"}
     named = ("layout_mode", "ui_mode", "word_size", "word_style", "word_gradient",
@@ -5413,6 +5420,8 @@ INTERLUDE_DOT_GLYPH = "●"   # U+25CF; swap for "⬤" (U+2B24) if you want it
 INTERLUDE_LANE_ROWS = 3     # fixed lane height in terminal rows (>= 3)
 INTERLUDE_HOP_ROWS = 2      # hop peak, in rows (keep <= INTERLUDE_LANE_ROWS - 1)
 INTERLUDE_HOP_HZ = 0.9      # hops per second: abs(sin(t * pi * hz))
+INTERLUDE_SPLIT_DELAY = 1.5  # seconds into a gap before the single dot splits
+                             # into three dots side-by-side
 # Empty lane rows must still render as one row (an empty Text renders zero
 # rows and would collapse the lane) and must not be whitespace (rich's centred
 # table cell rstrips whitespace and would shift the row). U+2800 is an
@@ -5468,6 +5477,10 @@ def _interlude_lane(accent_hex, t=None, lane_rows=None, gap_info=None):
     * ``single_dot`` (``dot``): one dot that hops vertically inside
       the lane in a constant accent colour, and matches that style's own lane
       height (2 rows, 1 on short terminals).
+    * ``single_to_three_dots`` (``dot``): starts with one dot hopping in the
+      centre of the lane for ``INTERLUDE_SPLIT_DELAY`` seconds into the gap,
+      then splits into three dots side-by-side like the wipe countdown
+      (``_interlude_three_dots``). One transition per gap session.
     * ``three_dots`` (``wipe`` / ``none`` / ``bounce``): the Apple Music
       countdown — three dots that light up one by one as the gap's remaining
       seconds run out (outro: they fade out right to left) — in the style's
@@ -5482,6 +5495,15 @@ def _interlude_lane(accent_hex, t=None, lane_rows=None, gap_info=None):
 
     lane = INTERLUDE_LANE_ROWS if lane_rows is None else max(1, int(lane_rows))
     peak = min(INTERLUDE_HOP_ROWS, lane - 1)
+
+    if mode == "single_to_three_dots" and gap_info:
+        # Seconds elapsed since this gap started (song clock, frozen while
+        # paused). Before the split delay: a single hopping dot. After:
+        # three dots side-by-side like the wipe countdown.
+        elapsed = gap_info.get("pos", t) - gap_info.get("start", t)
+        if elapsed >= INTERLUDE_SPLIT_DELAY:
+            return _interlude_three_dots(gap_info, accent_hex,
+                                         lane_rows=lane_rows)
 
     # Constant colour: the dot keeps the accent at every hop phase, never a
     # grey/colourless blend.

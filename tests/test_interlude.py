@@ -109,7 +109,61 @@ class TestInterludeLane(unittest.TestCase):
         self.assertEqual(rows[0].plain, app.INTERLUDE_DOT_GLYPH)
 
 
-class TestInterludeThreeDots(unittest.TestCase):
+class TestInterludeSingleToThreeDots(unittest.TestCase):
+    """dot style interlude: single hopping dot splits into three side-by-side
+    after INTERLUDE_SPLIT_DELAY seconds into the gap."""
+
+    def setUp(self):
+        app.set_animation("dot")
+
+    def _lane(self, gap_info, t=0.0):
+        return app._interlude_lane("#00e5ff", t=t, lane_rows=3,
+                                   gap_info=gap_info)
+
+    def _dot_rows(self, rows):
+        return [i for i, r in enumerate(rows)
+                if r.plain == app.INTERLUDE_DOT_GLYPH]
+
+    def test_no_gap_info_stays_single_dot(self):
+        # Backward compatible: without gap_info the interlude is a single dot.
+        rows = self._lane(None)
+        self.assertEqual(len(rows), app.INTERLUDE_LANE_ROWS)
+        self.assertEqual(self._dot_rows(rows),
+                         [app.interlude_dot_row(0.0, lane=3, peak=2)])
+
+    def test_before_split_delay_is_single_dot(self):
+        # Inside INTERLUDE_SPLIT_DELAY: still one hopping dot.
+        rows = self._lane({"start": 0.0, "pos": 1.0, "rem": 5.0})
+        dot_rows = self._dot_rows(rows)
+        self.assertEqual(len(dot_rows), 1)
+        self.assertEqual(dot_rows,
+                         [app.interlude_dot_row(0.0, lane=3, peak=2)])
+
+    def test_after_split_delay_is_three_dots(self):
+        # Past the delay: three dots side-by-side like the wipe countdown.
+        rows = self._lane({"start": 0.0, "pos": 2.0, "rem": 5.0})
+        self.assertEqual(len(rows), app.INTERLUDE_LANE_ROWS)
+        middle = app.INTERLUDE_LANE_ROWS // 2
+        want = f"{app.INTERLUDE_DOT_GLYPH}  {app.INTERLUDE_DOT_GLYPH}  {app.INTERLUDE_DOT_GLYPH}"
+        self.assertEqual(rows[middle].plain, want)
+        self.assertEqual(rows[middle].plain.count(app.INTERLUDE_DOT_GLYPH), 3)
+
+    def test_split_delay_is_at_the_exact_threshold(self):
+        # Exactly INTERLUDE_SPLIT_DELAY has already split.
+        rows = self._lane({"start": 0.0,
+                           "pos": app.INTERLUDE_SPLIT_DELAY, "rem": 5.0})
+        middle = app.INTERLUDE_LANE_ROWS // 2
+        want = f"{app.INTERLUDE_DOT_GLYPH}  {app.INTERLUDE_DOT_GLYPH}  {app.INTERLUDE_DOT_GLYPH}"
+        self.assertEqual(rows[middle].plain, want)
+
+    def test_three_dots_are_centred_and_one_cell_each(self):
+        rows = self._lane({"start": 0.0, "pos": 2.0, "rem": 5.0})
+        middle = rows[app.INTERLUDE_LANE_ROWS // 2]
+        self.assertEqual(cell_len(middle.plain), 7)  # 3 dots + 2 × 2 sep
+
+
+if __name__ == "__main__":
+    unittest.main()
     def setUp(self):
         # wipe/none show the Apple countdown instead of a hopping single dot.
         app.set_animation("wipe")
