@@ -2005,8 +2005,7 @@ def load_offset_cache():
     fine to keep entirely in memory for the session). Returns {} if the
     file doesn't exist yet or is unreadable/corrupt.
 
-    New format: {track_hash: {"offset": 0.15, "drift": 0.003, "adjustments": [ts, ...]}}
-    Legacy format: {track_hash: 0.15} (auto-migrated to new format on load).
+    Format: {track_hash: {"offset": 0.15}}
     """
     if OFFSET_CACHE_FILE.exists():
         try:
@@ -2014,15 +2013,9 @@ def load_offset_cache():
             out = {}
             for k, v in raw.items():
                 if isinstance(v, (int, float)):
-                    # legacy: bare number → wrap with zero drift/adjustments
-                    out[k] = {"offset": float(v), "drift": 0.0, "adjustments": []}
+                    out[k] = {"offset": float(v)}
                 elif isinstance(v, dict):
-                    # new format: fill missing fields with defaults
-                    out[k] = {
-                        "offset": float(v.get("offset", 0.0)),
-                        "drift": float(v.get("drift", 0.0)),
-                        "adjustments": list(v.get("adjustments", [])),
-                    }
+                    out[k] = {"offset": float(v.get("offset", 0.0))}
             return out
         except Exception:
             return {}
@@ -2038,12 +2031,7 @@ def save_offset_cache(cache):
 
 def offset_for_track(cache, artist, title):
     """Looks up this track's saved base sync offset, defaulting to 0.0 for a
-    track that's never been manually corrected before.
-
-    Returns the base offset only. The dynamic drift component is computed
-    separately in the render loop via ``drift_for_track`` so the caller
-    can apply it based on the current playback position.
-    """
+    track that's never been manually corrected before."""
     entry = cache.get(_track_hash(artist, title))
     if isinstance(entry, dict):
         return entry.get("offset", 0.0)
@@ -2052,77 +2040,14 @@ def offset_for_track(cache, artist, title):
     return 0.0
 
 
-def drift_for_track(cache, artist, title, pos):
-    """Returns the dynamic drift offset (seconds) for this track at playback
-    position ``pos``.
-
-    The drift rate is in seconds-per-second of playback. A positive drift
-    means the lyrics tend to run ahead as the song progresses, so the
-    returned value is added to the base offset. Zero for tracks that have
-    never been adjusted.
-    """
-    entry = cache.get(_track_hash(artist, title))
-    if not isinstance(entry, dict):
-        return 0.0
-    rate = entry.get("drift", 0.0)
-    if not rate:
-        return 0.0
-    return rate * max(0.0, pos)
-
-
 def save_offset_for_track(cache, artist, title, offset, pos=None):
     """Updates one track's entry in the in-memory cache dict and
     persists the whole map. ``[``/``]``/``r`` presses are rare enough that
     writing the full (tiny) file on every change is simpler than
-    debouncing it.
-
-    If ``pos`` is given, the adjustment is recorded with a timestamp so
-    the drift rate can be re-estimated from the pattern of corrections.
-    The base ``offset`` is stored as-is; the caller decides whether to
-    store the raw user value or the drift-compensated value.
-    """
+    debouncing it."""
     key = _track_hash(artist, title)
-    entry = cache.get(key)
-    if not isinstance(entry, dict):
-        entry = {"offset": 0.0, "drift": 0.0, "adjustments": []}
-    entry["offset"] = offset
-    if pos is not None:
-        entry.setdefault("adjustments", []).append({"pos": pos, "offset": offset, "t": time.time()})
-        # keep only the last 20 adjustments to bound the file size
-        entry["adjustments"] = entry["adjustments"][-20:]
-        # re-estimate drift from the adjustment history
-        entry["drift"] = _estimate_drift(entry["adjustments"])
-    cache[key] = entry
+    cache[key] = {"offset": float(offset)}
     save_offset_cache(cache)
-
-
-def _estimate_drift(adjustments):
-    """Linear regression slope of offset vs playback position.
-
-    Returns seconds of offset drift per second of playback. A positive
-    slope means the user keeps pushing the offset higher as the song
-    progresses (lyrics running ahead). Returns 0.0 if there aren't
-    enough points or the correlation is weak.
-    """
-    if len(adjustments) < 3:
-        return 0.0
-    # use only the last 10 points so a single bad early correction
-    # doesn't dominate the estimate
-    pts = adjustments[-10:]
-    n = len(pts)
-    sum_x = sum(p["pos"] for p in pts)
-    sum_y = sum(p["offset"] for p in pts)
-    sum_xy = sum(p["pos"] * p["offset"] for p in pts)
-    sum_x2 = sum(p["pos"] * p["pos"] for p in pts)
-    denom = n * sum_x2 - sum_x * sum_x
-    if abs(denom) < 1e-6:
-        return 0.0
-    slope = (n * sum_xy - sum_x * sum_y) / denom
-    # sanity: drift rates above ~0.01 s/s (1% speed error) are almost
-    # certainly noise or a user correcting a different problem
-    if abs(slope) > 0.01:
-        return 0.0
-    return slope
 
 
 # -------------------------------------------------------------- translation
@@ -6001,10 +5926,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         # letting the person nudge lyric timing to match a track's actual
         # vocal without touching the progress bar/time display below,
         # which still reflects real playback position.
-        # drift_component adapts the offset based on playback position to
-        # compensate for clock drift (e.g., lyrics running ahead over time).
-        drift_component = drift_for_track(offset_cache, artist, title, pos) if offset_cache and artist and title else 0.0
-        sync_pos = pos + sync_offset + drift_component
+        sync_pos = pos + sync_offset
         idx = current_index(entries, sync_pos)
         if WORD_MODE and not SHOW_ADLIB and entries and idx >= 0:
             k = idx
@@ -6150,9 +6072,10 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             _dbg_syl = sum(_estimate_syllables(w) for w in (current_line_text or "").split()) or 0
             _dbg_sps = song_sec_per_syllable if song_sec_per_syllable is not None else KARAOKE_SECONDS_PER_SYLLABLE
             _dbg_pace_tag = "song" if song_sec_per_syllable is not None else "default"
+            _dbg_words = len((text_for_estimation or "").split())
             debug_line = Text(
                 f"[dbg] idx={idx} line_start={line_start:.2f} next={next_line_start:.2f} "
-                f"raw_span={raw_span:.2f} words={est_words} syl={_dbg_syl} word_est={word_est_span:.2f} "
+                f"raw_span={raw_span:.2f} words={_dbg_words} syl={_dbg_syl} word_est={word_est_span:.2f} "
                 f"wipe_span={wipe_span:.2f} sync_pos={sync_pos:.2f} frac={frac:.3f} "
                 f"pace={_dbg_sps:.2f}s/syl({_dbg_pace_tag})"
                 f"{_lyrics_info_tag()}"
@@ -6460,6 +6383,8 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
         progress.append_text(bar)
         progress.append(f"  {fmt_time(pos)} / {fmt_time(duration)}", style="dim")
         progress.append(f"  ·  {pct}%", style=f"dim {ACCENT}")
+        if abs(sync_offset) > 0.001:
+            progress.append(f"  ·  sync:{sync_offset:+.2f}s", style=f"dim {ACCENT}")
         if source_player and not shazam_active:
             progress.append(f"  ·  {_player_short_name(source_player)}", style="dim")
     else:
@@ -6472,13 +6397,8 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
     # The full key list lives in the '?' help panel. The footer keeps only
     # the hint plus state that would otherwise be invisible.
     row1 = ["? help"]
-    total_offset = sync_offset
-    drift_component = drift_for_track(offset_cache, artist, title, pos) if offset_cache and artist and title else 0.0
-    if abs(sync_offset) > 0.001 or abs(drift_component) > 0.001:
-        if abs(drift_component) > 0.0001:
-            row1.append(f"sync:{total_offset:+.2f}s (base:{sync_offset:+.2f}s drift:{drift_component:+.3f}s)")
-        else:
-            row1.append(f"sync:{sync_offset:+.2f}s")
+    if abs(sync_offset) > 0.001:
+        row1.append(f"sync:{sync_offset:+.2f}s")
     if HAVE_ANIMATIONS and ANIMATION != animations.DEFAULT_ANIMATION:
         row1.append(f"anim:{ANIMATION}")
     if shazam_active:
