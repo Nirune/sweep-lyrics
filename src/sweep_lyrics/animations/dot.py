@@ -107,6 +107,7 @@ def estimate_bob_hz(words: Tuple) -> float:
 
     If word data exists, derive from average inter-word interval:
     - Assume a "beat" happens roughly every inter-word gap
+    - Divide by 2 to make bobbing feel more languid and musical
     - Convert to Hz, clamp to reasonable range [BOB_HZ_MIN, BOB_HZ_MAX]
     - Fallback to BOB_HZ if no valid data
 
@@ -130,9 +131,9 @@ def estimate_bob_hz(words: Tuple) -> float:
     intervals.sort()
     median_gap = intervals[len(intervals) // 2]
 
-    # Convert gap to frequency: one "bob cycle" per gap
-    # (a full up-down cycle takes median_gap seconds)
-    bob_hz = 1.0 / median_gap if median_gap > 0 else BOB_HZ
+    # Convert gap to frequency: one "bob cycle" per gap, divided by 2
+    # so bobbing feels more languid (slower) and musical
+    bob_hz = (1.0 / median_gap) / 2.0 if median_gap > 0 else BOB_HZ
 
     # Clamp to reasonable range
     return max(BOB_HZ_MIN, min(BOB_HZ_MAX, bob_hz))
