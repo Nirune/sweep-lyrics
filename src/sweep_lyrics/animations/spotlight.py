@@ -1,9 +1,9 @@
-"""Spotlight: a bright window around the active word, rest dimmed.
+"""Spotlight: active word glows bright, rest fades.
 
-The active word and its immediate neighbours are drawn in the accent colour
-and full brightness; words further away fade toward dim. The fade is a simple
-linear ramp based on cell distance from the active word, so the "spotlight"
-feels like a soft pool of light moving across the line.
+Only the active word is drawn in the accent colour at full brightness.
+Everything else fades to dim. The active word's leading edge feathers smoothly
+based on ``word_progress``, giving the same soft-edge feel as the main wipe
+without the per-cell feathering of ``karaoke_lit``.
 
 No lane rows are reserved: this is a text style effect, so switching to it
 never changes the layout height.
@@ -17,13 +17,11 @@ from .base import AnimFrame, AnimState, LyricAnimation
 
 __all__ = [
     "Spotlight",
-    "SPOTLIGHT_RADIUS",
     "DIM_RGB",
 ]
 
 # ---- Tunable constants ------------------------------------------------
-SPOTLIGHT_RADIUS = 2  # cells of full brightness on each side of active word
-DIM_RGB = (80, 80, 100)  # muted blue-grey for words outside the spotlight
+DIM_RGB = (80, 80, 100)  # muted blue-grey for unlit cells
 
 
 def _blend(fg: tuple, bg: tuple, t: float) -> tuple:
@@ -32,33 +30,8 @@ def _blend(fg: tuple, bg: tuple, t: float) -> tuple:
     return tuple(int(fg[i] * t + bg[i] * (1.0 - t)) for i in range(3))
 
 
-def _cell_brightness(
-    cell_idx: int,
-    active_start: int,
-    active_end: int,
-    radius: int = SPOTLIGHT_RADIUS,
-) -> float:
-    """Brightness factor (0–1) for a cell given the active word range.
-
-    Cells inside the active word get 1.0. Cells within `radius` cells of the
-    active word get a linear falloff. Cells beyond that get 0.0.
-    """
-    if active_start <= cell_idx < active_end:
-        return 1.0
-
-    # Distance from nearest edge of active word
-    if cell_idx < active_start:
-        dist = active_start - cell_idx
-    else:
-        dist = cell_idx - active_end + 1
-
-    if dist <= radius:
-        return 1.0 - (dist / (radius + 1))
-    return 0.0
-
-
 class Spotlight(LyricAnimation):
-    """Bright window follows the active word, rest fades to dim."""
+    """Active word glows bright, rest dims."""
 
     name = "spotlight"
     label = "Spotlight"
@@ -66,11 +39,6 @@ class Spotlight(LyricAnimation):
     interlude_mode = "three_dots"
 
     def render(self, state: AnimState) -> AnimFrame:
-        try:
-            from .. import app
-        except ImportError:
-            import app  # type: ignore
-
         text = state.line_text
         accent = state.accent_hex
         if not text:
@@ -78,25 +46,36 @@ class Spotlight(LyricAnimation):
 
         # Parse accent colour
         try:
+            from .. import app
+        except ImportError:
+            import app  # type: ignore
+
+        try:
             accent_rgb = app._hex_to_rgb(accent)
         except Exception:
             accent_rgb = (255, 255, 255)
 
-        # Determine active word position
+        # Determine active word range
         word_idx = state.word_idx
         if 0 <= word_idx < len(state.words):
             w = state.words[word_idx]
             active_start, active_end = w.char_from, w.char_to
+            active_progress = state.word_progress
         else:
-            # No active word (before first / after last) — dim everything
-            active_start, active_end = len(text) + 100, len(text) + 100  # past end
+            active_start, active_end = -1, -1
+            active_progress = 0.0
 
         # Build styled line
         line = Text()
         run, run_style = "", None
         for i, ch in enumerate(text):
-            bright = _cell_brightness(i, active_start, active_end, SPOTLIGHT_RADIUS)
-            rgb = _blend(accent_rgb, DIM_RGB, bright)
+            # Active word: use word_progress to blend
+            if active_start <= i < active_end:
+                value = active_progress
+            else:
+                value = 0.0
+
+            rgb = _blend(accent_rgb, DIM_RGB, value)
             style = f"bold #{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
 
             if style != run_style and run:
