@@ -25,6 +25,7 @@ from .base import (
 from .bounce import WordBounce
 from .dot import BouncingDot
 from .none import NoneAnimation
+from .spotlight import Spotlight
 from .typewriter import Typewriter
 from .underline import Underline
 from .wipe import Wipe
@@ -55,7 +56,7 @@ DEFAULT_ANIMATION = "wipe"
 # the same style (see app._default_settings).
 REGISTRY: Dict[str, Type[LyricAnimation]] = {
     a.name: a for a in (
-        Wipe, BouncingDot, WordBounce, NoneAnimation, Typewriter, Underline,
+        Wipe, BouncingDot, WordBounce, NoneAnimation, Typewriter, Underline, Spotlight,
     )
 }
 
