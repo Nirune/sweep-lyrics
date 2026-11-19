@@ -79,7 +79,9 @@ DOT_LANE_FULL_MIN_HEIGHT = 8
 SUBPIXELS_PER_ROW = 4      # braille grid: 4 vertical subrows per terminal row
 DOT_HEIGHT_SUBROWS = 1     # the dot occupies this many subrows (clamp reserve)
 DOT_BOB_SUBROWS = 4        # bob amplitude across terminal rows while holding a word
-BOB_HZ = 1.2               # bobs per second while holding a word
+BOB_HZ = 1.2               # fallback bobs per second (used if BPM can't be estimated)
+BOB_HZ_MIN = 0.8           # minimum bob frequency (for very slow songs)
+BOB_HZ_MAX = 3.0           # maximum bob frequency (for very fast songs)
 ARC_SEC = 0.24             # longest jump toward the next word (s)
 ARC_LEAD = 0.04            # land this long before the next word's onset
 
@@ -98,6 +100,42 @@ def smoothstep(x: float) -> float:
     """Ease in/out on 0..1 (clamped)."""
     x = max(0.0, min(1.0, x))
     return x * x * (3.0 - 2.0 * x)
+
+
+def estimate_bob_hz(words: Tuple) -> float:
+    """Estimate bobbing frequency (Hz) from word timings.
+
+    If word data exists, derive from average inter-word interval:
+    - Assume a "beat" happens roughly every inter-word gap
+    - Convert to Hz, clamp to reasonable range [BOB_HZ_MIN, BOB_HZ_MAX]
+    - Fallback to BOB_HZ if no valid data
+
+    This makes bobbing faster in uptempo songs, slower in ballads.
+    """
+    if not words or len(words) < 2:
+        return BOB_HZ
+
+    # Collect inter-word intervals (onset gaps between consecutive words)
+    intervals = []
+    for i in range(len(words) - 1):
+        gap = words[i + 1].onset - words[i].onset
+        # Only use plausible inter-word gaps (0.2s–3s)
+        if 0.2 <= gap <= 3.0:
+            intervals.append(gap)
+
+    if not intervals:
+        return BOB_HZ
+
+    # Use median interval to avoid outliers
+    intervals.sort()
+    median_gap = intervals[len(intervals) // 2]
+
+    # Convert gap to frequency: one "bob cycle" per gap
+    # (a full up-down cycle takes median_gap seconds)
+    bob_hz = 1.0 / median_gap if median_gap > 0 else BOB_HZ
+
+    # Clamp to reasonable range
+    return max(BOB_HZ_MIN, min(BOB_HZ_MAX, bob_hz))
 
 
 def lane_rows_for(height: Optional[int]) -> int:
@@ -193,6 +231,9 @@ def dot_subrow(state: AnimState, lane_rows: int = DOT_LANE_ROWS) -> int:
 
     Returns a value in ``0 .. max_subrow(lane_rows)``. The bottom of that range
     is the lane's lowest subrow, i.e. directly above the active lyric line.
+    
+    Bobbing frequency is derived from word timings (tempo-aware) if available,
+    otherwise falls back to BOB_HZ.
     """
     rest = max_subrow(lane_rows)
     progress = jump_progress(state)
@@ -204,7 +245,11 @@ def dot_subrow(state: AnimState, lane_rows: int = DOT_LANE_ROWS) -> int:
         return rest
     idx = min(state.word_idx, state.word_count - 1)
     elapsed = max(0.0, state.sync_pos - state.words[idx].onset)
-    bob = 0.5 - 0.5 * math.cos(2.0 * math.pi * BOB_HZ * elapsed)
+    
+    # Estimate bobbing frequency from word timings (tempo-aware)
+    bob_hz = estimate_bob_hz(state.words)
+    
+    bob = 0.5 - 0.5 * math.cos(2.0 * math.pi * bob_hz * elapsed)
     return clamp_subrow(rest - DOT_BOB_SUBROWS * bob, lane_rows)
 
 
