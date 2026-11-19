@@ -5404,7 +5404,7 @@ def _anim_view(layout, *, split=False, dock=False):
 def _lane_row(row, prefix=""):
     """Indent a lane row so it lines up under the lyric.
 
-    The classic/split layouts put a two-column ``"▌ "`` rail in front of the
+    The classic/split layouts put a two-column ``"▎ "`` rail in front of the
     active line; rows drawn above it need the same offset or the lane looks
     shifted left.
     """
@@ -6294,7 +6294,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                         body_lines.append(kl)
                     elif layout == LAYOUT_CLASSIC and not dock_ui:  # classic accent block
                         rail = Text()
-                        rail.append("▌ ", style=active_accent_hex)
+                        rail.append("▎ ", style=active_accent_hex)
                         rail.append_text(kl)
                         body_lines.append(rail)
                     else:
@@ -6305,7 +6305,7 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                         timeline_active.add(id(marked))
                     else:
                         marked = Text()
-                        marked.append("▌ ", style=active_accent_hex)
+                        marked.append("▎ ", style=active_accent_hex)
                         marked.append(line_text, style=f"bold {active_accent_hex}")
                     body_lines.append(marked)
                 if translate_enabled and translations and i < len(translations) and translations[i] and not in_gap:
@@ -6373,15 +6373,15 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
                         orig_lines.append(_lane_row(_row, "  "))
                         trans_lines.append(Text(""))
                     o_t = Text()
-                    o_t.append("▌ ", style=active_accent_hex)
+                    o_t.append("▎ ", style=active_accent_hex)
                     o_t.append_text(kl)
                     orig_lines.append(o_t)
                 else:
                     o_t = Text()
-                    o_t.append("▌ ", style=active_accent_hex)
+                    o_t.append("▎ ", style=active_accent_hex)
                     o_t.append(line_text, style=f"bold {active_accent_hex}")
                     orig_lines.append(o_t)
-                trans_lines.append(Text(f"▌ {trans_text}", style=f"bold {active_accent_hex}") if trans_text else Text(""))
+                trans_lines.append(Text(f"▎ {trans_text}", style=f"bold {active_accent_hex}") if trans_text else Text(""))
             else:
                 distance = abs(i - idx)
                 if distance == 1:
