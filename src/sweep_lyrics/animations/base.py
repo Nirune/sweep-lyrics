@@ -26,6 +26,7 @@ __all__ = [
     "LyricAnimation",
     "default_syllables",
     "resolve_word_spans",
+    "synthesize_word_spans",
 ]
 
 
@@ -146,6 +147,58 @@ def resolve_word_spans(
             )
         )
     return tuple(resolved)
+
+
+def synthesize_word_spans(
+    text: str,
+    line_start: float,
+    line_end: float,
+    *,
+    syllable_fn=default_syllables,
+    sec_per_syllable: float = 0.22,
+) -> Tuple[WordSpan, ...]:
+    """Invent per-word spans for a line that only has line-level timing.
+
+    Sources like LRCLIB ship plain ``[mm:ss.xx]line`` stamps with no
+    Enhanced-LRC ``<mm:ss.xx>word`` tags, so :func:`resolve_word_spans` has
+    nothing to resolve and pointer animations (bouncing dot, word bounce)
+    would sit still. This spreads the line's words across its time window
+    instead: each word's share is proportional to its estimated syllable
+    count, so a long word takes proportionally longer to "sing" and the dot
+    lands on the next word roughly when a singer would.
+
+    The span is capped at the syllable estimate (the same cap the wipe uses)
+    so an instrumental break after a short line does not drag its words
+    across the whole gap. Character offsets stay exact — only the timings are
+    invented — so word columns and the drawn row keep lining up.
+    """
+    words = list(re.finditer(r"\S+", text or ""))
+    if not words:
+        return ()
+    weights = [max(1, int(syllable_fn(m.group()))) for m in words]
+    total = float(sum(weights))
+    est = max(0.3, total * sec_per_syllable)
+    span = float(line_end) - float(line_start)
+    if span <= 0.05:      # no usable window (last line / unknown next start)
+        span = est
+    span = min(span, est)  # a real gap longer than the sung estimate is a break
+    span = max(span, 0.3)
+
+    spans: List[WordSpan] = []
+    cursor = float(line_start)
+    for m, weight in zip(words, weights):
+        dur = span * (weight / total)
+        spans.append(
+            WordSpan(
+                onset=cursor,
+                end=cursor + dur,
+                text=m.group(),
+                char_from=m.start(),
+                char_to=m.end(),
+            )
+        )
+        cursor += dur
+    return tuple(spans)
 
 
 # --------------------------------------------------------------------------- #

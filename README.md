@@ -119,6 +119,8 @@ Pick a lyric animation:
 
 Set `SWEEP_ANIMATION` to `wipe`, `dot`, `bounce`, or `none` before you start. That choice lasts for this run.
 
+`dot` and `bounce` follow per-word onsets. When the lyrics source only has line-level timing (LRCLIB, YouTube Music), Sweep Lyrics spreads the line's words across its time window by syllable weight, so both styles still move instead of sitting still.
+
 In settings (`o`), open **Lyric animation → Lyric style** and press `←` / `→`. **Layout → Mode** sets the arrangement: classic, bait, timeline, hud, or split. **Interface → Mode** switches the chrome: `standard` keeps the footer and the left cover, `dock` uses a bottom info strip.
 
 Sweep Lyrics saves each setting by name and loads it on the next run. You see the active style in the footer, such as `anim:dot`, unless you left it on `wipe`.

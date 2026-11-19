@@ -5236,16 +5236,29 @@ def build_anim_state(*, pos, sync_pos, line_idx, line_text, line_start, line_end
     spans — animations then fall back to line-level data instead of guessing.
     """
     spans = ()
+    sps = (sec_per_syllable if sec_per_syllable is not None
+           else KARAOKE_SECONDS_PER_SYLLABLE)
     if HAVE_ANIMATIONS:
         spans = animations.resolve_word_spans(
             line_text,
             word_timings,
             line_end if line_end > line_start else None,
             syllable_fn=_estimate_syllables,
-            sec_per_syllable=(sec_per_syllable if sec_per_syllable is not None
-                              else KARAOKE_SECONDS_PER_SYLLABLE),
+            sec_per_syllable=sps,
             hold_max=KARAOKE_HOLD_MAX,
         )
+        if not spans and (line_text or "").strip():
+            # Line-level-only sources (LRCLIB and friends) carry no word
+            # tags, and a romanized/adlib-edited line can defeat the match
+            # even when they do. Spread the words across the line anyway so
+            # pointer animations (dot, bounce) still have onsets to follow.
+            # The wipe is untouched: it reads `word_timings`, not these spans.
+            span_end = (line_end if line_end > line_start
+                        else line_start + _estimate_line_seconds(line_text, sps))
+            spans = animations.synthesize_word_spans(
+                line_text, line_start, span_end,
+                syllable_fn=_estimate_syllables, sec_per_syllable=sps,
+            )
 
     word_idx, word_progress = -1, 0.0
     next_onset, time_to_next = None, 0.0
@@ -6125,6 +6138,10 @@ def render_frame(artist, title, entries, pos, duration, status, width, height,
             # "still stuck white" report can be matched against exactly
             # what raw_span/wipe_span/frac were doing on that line.
             wl_tag = f" words_ts={len(active_word_timings)}" if active_word_timings else " words_ts=none"
+            if not active_word_timings:
+                _dbg_nsynth = len((current_line_text or "").split())
+                if _dbg_nsynth:
+                    wl_tag = f" words_ts=est({_dbg_nsynth})"
             # onset tracker status for the hybrid wipe path
             if onset_tracker is None:
                 onset_tag = " onset=off"

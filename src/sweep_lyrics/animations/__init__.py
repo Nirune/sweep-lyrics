@@ -14,7 +14,14 @@ from __future__ import annotations
 import os
 from typing import Dict, Tuple, Type
 
-from .base import AnimFrame, AnimState, LyricAnimation, WordSpan, resolve_word_spans
+from .base import (
+    AnimFrame,
+    AnimState,
+    LyricAnimation,
+    WordSpan,
+    resolve_word_spans,
+    synthesize_word_spans,
+)
 from .bounce import WordBounce
 from .dot import BouncingDot
 from .none import NoneAnimation
@@ -26,6 +33,7 @@ __all__ = [
     "LyricAnimation",
     "WordSpan",
     "resolve_word_spans",
+    "synthesize_word_spans",
     "REGISTRY",
     "DEFAULT_ANIMATION",
     "ENV_VAR",

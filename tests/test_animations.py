@@ -30,6 +30,7 @@ from sweep_lyrics.animations.base import (
     WordSpan,
     default_syllables,
     resolve_word_spans,
+    synthesize_word_spans,
 )
 from sweep_lyrics.animations.dot import (
     ARC_LEAD,
@@ -111,6 +112,63 @@ class TestWordSpans(unittest.TestCase):
         self.assertAlmostEqual(spans[0].end, 0.2, places=3)
         # Second word: real end (1.0) is honored
         self.assertAlmostEqual(spans[1].end, 1.0, places=3)
+
+
+class TestSynthesizedWordSpans(unittest.TestCase):
+    """Line-level-only sources still get per-word onsets for pointer anims."""
+
+    def test_empty_text(self):
+        self.assertEqual(synthesize_word_spans("", 0.0, 3.0), ())
+        self.assertEqual(synthesize_word_spans("   ", 0.0, 3.0), ())
+
+    def test_one_span_per_word(self):
+        text = "aku mau kamu"
+        spans = synthesize_word_spans(text, 10.0, 13.0)
+        self.assertEqual(len(spans), 3)
+        self.assertEqual([s.text for s in spans], ["aku", "mau", "kamu"])
+        self.assertEqual([(s.char_from, s.char_to) for s in spans],
+                         [(0, 3), (4, 7), (8, 12)])
+
+    def test_spans_are_contiguous_and_inside_the_line(self):
+        text = "jangan bimbang karena aku cuma satu"
+        spans = synthesize_word_spans(text, 5.0, 9.0)
+        self.assertAlmostEqual(spans[0].onset, 5.0, places=6)
+        for a, b in zip(spans, spans[1:]):
+            self.assertAlmostEqual(a.end, b.onset, places=6)
+        self.assertLessEqual(spans[-1].end, 9.0 + 1e-9)
+
+    def test_longer_word_gets_more_time(self):
+        spans = synthesize_word_spans(
+            "di hatimu", 0.0, 2.0, syllable_fn=lambda w: len(w), sec_per_syllable=1.0
+        )
+        self.assertGreater(spans[1].duration, spans[0].duration)
+
+    def test_break_is_capped_by_the_syllable_estimate(self):
+        # 30 s gap after a 2-word line: words must not crawl for 30 s.
+        spans = synthesize_word_spans(
+            "aku dia", 0.0, 30.0,
+            syllable_fn=lambda w: 2, sec_per_syllable=0.5,
+        )
+        self.assertLessEqual(spans[-1].end, 2.0 + 1e-9)
+
+    def test_short_gap_keeps_the_real_window(self):
+        spans = synthesize_word_spans(
+            "aku dia", 4.0, 5.0,
+            syllable_fn=lambda w: 2, sec_per_syllable=5.0,
+        )
+        self.assertAlmostEqual(spans[-1].end, 5.0, places=6)
+
+    def test_unknown_end_falls_back_to_the_estimate(self):
+        spans = synthesize_word_spans("aku dia", 7.0, 7.0, syllable_fn=lambda w: 2)
+        self.assertGreater(spans[-1].end, 7.0)
+
+    def test_no_duplicate_char_ranges(self):
+        text = "a b c d"
+        spans = synthesize_word_spans(text, 0.0, 4.0)
+        seen = set()
+        for s in spans:
+            self.assertNotIn((s.char_from, s.char_to), seen)
+            seen.add((s.char_from, s.char_to))
 
 
 class TestDotLaneGeometry(unittest.TestCase):
