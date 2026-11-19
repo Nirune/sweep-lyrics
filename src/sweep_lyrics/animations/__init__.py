@@ -26,6 +26,7 @@ from .bounce import WordBounce
 from .dot import BouncingDot
 from .none import NoneAnimation
 from .typewriter import Typewriter
+from .underline import Underline
 from .wipe import Wipe
 
 __all__ = [
@@ -53,7 +54,9 @@ DEFAULT_ANIMATION = "wipe"
 # appended so the legacy integer index in old settings.json keeps mapping to
 # the same style (see app._default_settings).
 REGISTRY: Dict[str, Type[LyricAnimation]] = {
-    a.name: a for a in (Wipe, BouncingDot, WordBounce, NoneAnimation, Typewriter)
+    a.name: a for a in (
+        Wipe, BouncingDot, WordBounce, NoneAnimation, Typewriter, Underline,
+    )
 }
 
 

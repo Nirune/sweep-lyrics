@@ -4214,14 +4214,12 @@ def _smooth_edge(segs, at, lead, window, taps=7):
     return acc / tot
 
 
-def _karaoke_words_smooth(text, word_timings, sync_pos, accent_hex, line_end=None):
-    """Same inputs/contract as _karaoke_words, but a per-cell soft-edge wipe: each cell's colour
-    is mix(rest, accent, 1 - smoothstep(edge, edge + feather, x)) in true colour, like the Dux
-    GLSL fill. Returns None when it can't be used so the caller falls back to _karaoke_words."""
-    try:
-        fill_rgb = _hex_to_rgb(accent_hex)
-    except Exception:
-        return None
+def _smooth_edge_at(text, word_timings, sync_pos, line_end=None):
+    """``(edge, feather, total_cells)`` for the soft-edge wipe, or None.
+
+    Shared by the wipe renderer and by animations that need the same edge
+    (the underline rule), so both always advance on the identical curve.
+    """
     spans, pos = [], 0
     for _wt in word_timings:
         wstart, wtext = _wt
@@ -4256,6 +4254,21 @@ def _karaoke_words_smooth(text, word_timings, sync_pos, accent_hex, line_end=Non
         else:
             segs.append((ws, ws + _word_dur(ws, nxt, est, we), x0, x1))
     edge = _smooth_edge(segs, sync_pos, feather, KARAOKE_SWEEP_WINDOW)
+    return edge, feather, total
+
+
+def _karaoke_words_smooth(text, word_timings, sync_pos, accent_hex, line_end=None):
+    """Same inputs/contract as _karaoke_words, but a per-cell soft-edge wipe: each cell's colour
+    is mix(rest, accent, 1 - smoothstep(edge, edge + feather, x)) in true colour, like the Dux
+    GLSL fill. Returns None when it can't be used so the caller falls back to _karaoke_words."""
+    try:
+        fill_rgb = _hex_to_rgb(accent_hex)
+    except Exception:
+        return None
+    got = _smooth_edge_at(text, word_timings, sync_pos, line_end)
+    if got is None:
+        return None
+    edge, feather, total = got
     if edge <= -feather + 1e-6:
         return Text(text, style="bold white")
     if edge >= 1.0:
@@ -5060,35 +5073,15 @@ def _current_word(text, frac, word_timings=None, sync_pos=None, line_end=None):
     return (words[k], k, len(words), prog)
 
 
-def karaoke_line(text, frac, accent_hex, word_timings=None, sync_pos=None,
-                 line_end=None):
-    """Sweeps a line's color left-to-right.
+def _estimated_cut(text, frac):
+    """Character index the syllable-estimated wipe has reached at ``frac``.
 
-    When `word_timings` (list of (word_start_seconds, word_text)) and
-    `sync_pos` are both provided, the cut is driven by real word onsets
-    from Enhanced LRC — no syllable guessing, no easing curve. Words
-    whose start time has already passed turn accent; the current word
-    is underlined at the cut.
-
-    Otherwise falls back to the existing estimate: syllable-weighted
-    character split + optional smoothstep ease (KARAOKE_EASE).
-
-    Always a hard two-tone cut (accent | white), never a gradient band.
+    Shared by :func:`karaoke_line` and :func:`karaoke_lit` so an animation
+    that draws its own marker moves on exactly the same curve as the wipe.
     """
     n = len(text)
     if n == 0:
-        return Text("")
-
-    # --- word-level path (Enhanced LRC) ---------------------------------
-    if word_timings and sync_pos is not None and len(word_timings) > 0:
-        res = (_karaoke_words_smooth(text, word_timings, sync_pos, accent_hex, line_end)
-               if KARAOKE_SMOOTH else None)
-        if res is None:
-            res = _karaoke_words(text, word_timings, sync_pos, accent_hex, line_end)
-        if res is not None:
-            return res
-
-    # --- estimated path (syllable weights + ease) -----------------------
+        return 0
     weights = _char_weights(text)
     eased_frac = frac + (_ease_wipe(frac) - frac) * KARAOKE_EASE
     total_w = sum(weights) or 1.0
@@ -5120,7 +5113,72 @@ def karaoke_line(text, frac, accent_hex, word_timings=None, sync_pos=None,
             cut = word_end
             if cut < n and text[cut].isspace():
                 cut += 1
+    return cut
 
+
+def karaoke_lit(text, frac, word_timings=None, sync_pos=None, line_end=None):
+    """Per-character 0..1 "sung" fraction — the exact edge the wipe draws.
+
+    Animations that add their own marker (the underline rule) use this so
+    their edge advances with the same syllable weights, easing and soft-edge
+    feathering as the karaoke wipe, instead of stepping word by word.
+    """
+    n = len(text)
+    if n == 0:
+        return []
+    if word_timings and sync_pos is not None:
+        got = _smooth_edge_at(text, word_timings, sync_pos, line_end)
+        if got is not None:
+            edge, feather, total = got
+            out, col = [], 0
+            for ch in text:
+                w = cell_len(ch)
+                x = (col + w / 2) / total
+                col += w
+                u = min(1.0, max(0.0, (x - edge) / feather))
+                out.append(1.0 - u * u * (3.0 - 2.0 * u))
+            return out
+    cut = _estimated_cut(text, frac)
+    if cut <= 0:
+        return [0.0] * n
+    if cut >= n:
+        return [1.0] * n
+    # The wipe lights everything before the cut and the cut cell itself
+    # (snapped back off whitespace), so the rule ends on the same letter.
+    hi = _snap_cut_off_whitespace(text, cut, n)
+    return [1.0 if i <= hi else 0.0 for i in range(n)]
+
+
+def karaoke_line(text, frac, accent_hex, word_timings=None, sync_pos=None,
+                 line_end=None):
+    """Sweeps a line's color left-to-right.
+
+    When `word_timings` (list of (word_start_seconds, word_text)) and
+    `sync_pos` are both provided, the cut is driven by real word onsets
+    from Enhanced LRC — no syllable guessing, no easing curve. Words
+    whose start time has already passed turn accent; the current word
+    is underlined at the cut.
+
+    Otherwise falls back to the existing estimate: syllable-weighted
+    character split + optional smoothstep ease (KARAOKE_EASE).
+
+    Always a hard two-tone cut (accent | white), never a gradient band.
+    """
+    n = len(text)
+    if n == 0:
+        return Text("")
+
+    # --- word-level path (Enhanced LRC) ---------------------------------
+    if word_timings and sync_pos is not None and len(word_timings) > 0:
+        res = (_karaoke_words_smooth(text, word_timings, sync_pos, accent_hex, line_end)
+               if KARAOKE_SMOOTH else None)
+        if res is None:
+            res = _karaoke_words(text, word_timings, sync_pos, accent_hex, line_end)
+        if res is not None:
+            return res
+
+    # --- estimated path (syllable weights + ease) -----------------------
+    cut = _estimated_cut(text, frac)
     if cut <= 0:
         return Text(text, style="bold white")
     if cut >= n:

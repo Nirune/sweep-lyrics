@@ -51,6 +51,10 @@ from sweep_lyrics.animations.dot import (
     word_center,
 )
 from sweep_lyrics.animations.none import NoneAnimation
+from sweep_lyrics.animations.underline import (
+    Underline,
+    cell_style,
+)
 from sweep_lyrics.animations.typewriter import (
     CARET,
     HIDDEN,
@@ -732,7 +736,7 @@ class TestAnimLaneRows(unittest.TestCase):
     def test_per_word_mode_reserves_no_lane(self):
         # Cycling animations in per-word mode must not move the big word.
         self.app.WORD_MODE = True
-        for name in ("wipe", "dot", "bounce", "none", "typewriter"):
+        for name in ("wipe", "dot", "bounce", "none", "typewriter", "underline"):
             self.app.set_animation(name)
             self.assertEqual(self.app._anim_lane_rows(24), 0)
 
@@ -845,6 +849,134 @@ class TestTypewriter(unittest.TestCase):
             b = typed_boundary(self._state(t))
             self.assertGreaterEqual(b, prev, f"t={t}")
             prev = b
+
+
+class TestUnderline(unittest.TestCase):
+    """The rule advances on the wipe's own edge, not word by word."""
+
+    TEXT = "one two three four"
+
+    def _state(self, frac, word_timings=None, sync_pos=None):
+        return AnimState(
+            pos=0.0, sync_pos=(frac if sync_pos is None else sync_pos),
+            line_idx=0, line_text=self.TEXT, line_start=0.0, line_end=4.0,
+            wipe_span=4.0, frac=frac, accent_hex="#00e5ff", words=(),
+            word_timings=word_timings, word_idx=-1, word_progress=0.0,
+            next_onset=None, time_to_next=None, width=80, height=24,
+            line_cols=len(self.TEXT),
+        )
+
+    def _underlined(self, line):
+        return [i for i in range(len(line.plain))
+                if "underline" in _style_at(line, i)]
+
+    def test_config(self):
+        style = Underline()
+        self.assertEqual(style.name, "underline")
+        self.assertEqual(style.label, "Underline")
+        self.assertEqual(style.extra_rows_above, 0)
+        self.assertEqual(style.interlude_mode, "three_dots")
+        self.assertLessEqual(len(style.label) + 4, 17)
+
+    def test_registered(self):
+        from sweep_lyrics import animations
+        self.assertIn("underline", animations.animation_names())
+        self.assertEqual(
+            animations.get_animation("underline").name, "underline")
+
+    def test_text_is_never_altered(self):
+        for frac in (0.0, 0.1, 0.5, 0.9, 1.0):
+            self.assertEqual(
+                Underline().render(self._state(frac)).line.plain, self.TEXT)
+
+    def test_nothing_is_underlined_at_the_start(self):
+        line = Underline().render(self._state(0.0)).line
+        self.assertEqual(self._underlined(line), [])
+
+    def test_whole_line_is_underlined_at_the_end(self):
+        # Word gaps stay blank: every letter, no spaces.
+        line = Underline().render(self._state(1.0)).line
+        expected = [i for i, ch in enumerate(self.TEXT) if not ch.isspace()]
+        self.assertEqual(self._underlined(line), expected)
+
+    def test_word_gaps_are_not_underlined(self):
+        line = Underline().render(self._state(1.0)).line
+        for i, ch in enumerate(self.TEXT):
+            if ch.isspace():
+                self.assertNotIn("underline", _style_at(line, i))
+
+    def test_edge_matches_the_wipe(self):
+        from sweep_lyrics import app
+        n = len(self.TEXT)
+        for frac in (0.1, 0.25, 0.4, 0.5, 0.65, 0.8, 0.95, 1.0):
+            cut = app._estimated_cut(self.TEXT, frac)
+            hi = app._snap_cut_off_whitespace(self.TEXT, cut, n) if cut > 0 else -1
+            got = self._underlined(Underline().render(self._state(frac)).line)
+            expected = [i for i in range(hi + 1) if not self.TEXT[i].isspace()]
+            self.assertEqual(got, expected, f"frac={frac}")
+
+    def test_rule_only_grows(self):
+        prev = 0
+        for i in range(21):
+            frac = i / 20.0
+            n = len(self._underlined(
+                Underline().render(self._state(frac)).line))
+            self.assertGreaterEqual(n, prev, f"frac={frac}")
+            prev = n
+
+    def test_uses_the_accent_colour_when_sung(self):
+        line = Underline().render(self._state(1.0)).line
+        self.assertIn("#00e5ff", _style_at(line, 0))
+
+    def test_word_timings_follow_the_smooth_edge(self):
+        # Real word timings take the feathered path: the edge feathers, so a
+        # cell in the band is tinted but not yet underlined.
+        timings = [(0.0, "one"), (1.0, "two"), (2.0, "three"), (3.0, "four")]
+        state = self._state(0.0, word_timings=timings, sync_pos=2.05)
+        line = Underline().render(state).line
+        self.assertIn("underline", _style_at(line, 0))      # "one" sung
+        self.assertIn("underline", _style_at(line, 4))      # "two" sung
+        self.assertNotIn("underline", _style_at(line, 14))  # "four" not yet
+
+    def test_smooth_path_feathers_colours(self):
+        from sweep_lyrics import app
+        timings = [(0.0, "one"), (1.0, "two"), (2.0, "three"), (3.0, "four")]
+        lit = app.karaoke_lit(self.TEXT, 0.0, timings, 2.05, 4.0)
+        self.assertTrue(any(0.0 < v < 1.0 for v in lit),
+                        "expected a soft band between accent and white")
+
+    def test_no_word_data_uses_the_wipe_cut(self):
+        from sweep_lyrics import app
+        n = len(self.TEXT)
+        lit = app.karaoke_lit(self.TEXT, 0.5, None, None, None)
+        cut = app._estimated_cut(self.TEXT, 0.5)
+        hi = app._snap_cut_off_whitespace(self.TEXT, cut, n)
+        self.assertEqual(lit, [1.0] * (hi + 1) + [0.0] * (n - hi - 1))
+
+    def test_empty_line_is_safe(self):
+        state = AnimState(
+            pos=0.0, sync_pos=0.0, line_idx=0, line_text="", line_start=0.0,
+            line_end=0.0, wipe_span=1.0, frac=0.0, accent_hex="#00e5ff",
+            words=(), word_idx=-1, word_progress=0.0, next_onset=None,
+            time_to_next=None, width=80, height=24,
+        )
+        self.assertEqual(Underline().render(state).line.plain, "")
+
+    def test_cell_style_blends_and_underlines_past_half(self):
+        fill, rest = (0, 229, 255), (255, 255, 255)
+        self.assertNotIn("underline", cell_style(0.0, fill, rest))
+        self.assertIn("underline", cell_style(1.0, fill, rest))
+        self.assertIn("#00e5ff", cell_style(1.0, fill, rest))
+        self.assertIn("#ffffff", cell_style(0.0, fill, rest))
+        self.assertNotIn("underline", cell_style(0.49, fill, rest))
+        self.assertNotIn("underline", cell_style(1.0, fill, rest, rule=False))
+        self.assertIn("#00e5ff", cell_style(1.0, fill, rest, rule=False))
+        self.assertIn("underline", cell_style(0.5, fill, rest))
+
+    def test_frame_is_deterministic(self):
+        a = Underline().render(self._state(0.4)).line.plain
+        b = Underline().render(self._state(0.4)).line.plain
+        self.assertEqual(a, b)
 
 
 class TestWordBounce(unittest.TestCase):
