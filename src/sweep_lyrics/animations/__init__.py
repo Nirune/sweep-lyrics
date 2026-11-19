@@ -25,6 +25,7 @@ from .base import (
 from .bounce import WordBounce
 from .dot import BouncingDot
 from .none import NoneAnimation
+from .typewriter import Typewriter
 from .wipe import Wipe
 
 __all__ = [
@@ -48,9 +49,11 @@ __all__ = [
 ENV_VAR = "SWEEP_ANIMATION"
 DEFAULT_ANIMATION = "wipe"
 
-# name -> class. Ordered: this is also the runtime cycle order.
+# name -> class. Ordered: this is also the runtime cycle order. New styles are
+# appended so the legacy integer index in old settings.json keeps mapping to
+# the same style (see app._default_settings).
 REGISTRY: Dict[str, Type[LyricAnimation]] = {
-    a.name: a for a in (Wipe, BouncingDot, WordBounce, NoneAnimation)
+    a.name: a for a in (Wipe, BouncingDot, WordBounce, NoneAnimation, Typewriter)
 }
 
 

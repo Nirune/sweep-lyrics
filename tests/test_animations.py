@@ -51,6 +51,13 @@ from sweep_lyrics.animations.dot import (
     word_center,
 )
 from sweep_lyrics.animations.none import NoneAnimation
+from sweep_lyrics.animations.typewriter import (
+    CARET,
+    HIDDEN,
+    Typewriter,
+    caret_on,
+    typed_boundary,
+)
 from sweep_lyrics.animations.wipe import Wipe
 
 
@@ -725,9 +732,119 @@ class TestAnimLaneRows(unittest.TestCase):
     def test_per_word_mode_reserves_no_lane(self):
         # Cycling animations in per-word mode must not move the big word.
         self.app.WORD_MODE = True
-        for name in ("wipe", "dot", "bounce", "none"):
+        for name in ("wipe", "dot", "bounce", "none", "typewriter"):
             self.app.set_animation(name)
             self.assertEqual(self.app._anim_lane_rows(24), 0)
+
+
+class TestTypewriter(unittest.TestCase):
+    """The active line types itself in, one character at a time."""
+
+    TEXT = "hello world"
+    SPANS = (
+        WordSpan(0.0, 1.0, "hello", 0, 5),
+        WordSpan(1.0, 2.0, "world", 6, 11),
+    )
+
+    def _state(self, sync_pos):
+        return _mk_state(self.TEXT, self.SPANS, word_idx=0, sync_pos=sync_pos)
+
+    def _visible(self, line):
+        # Drop placeholders, the caret and word gaps: what the user reads.
+        return (line.plain.replace(HIDDEN, "").replace(CARET, "")
+                .replace(" ", ""))
+
+    def test_config(self):
+        tw = Typewriter()
+        self.assertEqual(tw.name, "typewriter")
+        self.assertEqual(tw.label, "Typewriter")
+        self.assertEqual(tw.extra_rows_above, 0)
+        self.assertEqual(tw.interlude_mode, "three_dots")
+        # The label has to fit the settings value column.
+        self.assertLessEqual(len(tw.label) + 4, 17)
+
+    def test_registered(self):
+        from sweep_lyrics import animations
+        self.assertIn("typewriter", animations.animation_names())
+        self.assertEqual(animations.get_animation("typewriter").name, "typewriter")
+
+    def test_nothing_typed_before_the_first_onset(self):
+        state = _mk_state(self.TEXT, self.SPANS, word_idx=-1, sync_pos=-1.0)
+        line = Typewriter().render(state).line
+        self.assertEqual(self._visible(line), "")
+
+    def test_partial_word_reveals_its_leading_characters(self):
+        # "hello" spans 0..1 s; half way through, ~3 of its 5 letters are up.
+        line = Typewriter().render(self._state(0.5)).line
+        self.assertTrue(self._visible(line).startswith("hel"))
+        self.assertFalse(self._visible(line).startswith("hell"))
+
+    def test_first_character_appears_at_the_onset(self):
+        self.assertEqual(self._visible(Typewriter().render(self._state(0.0)).line), "h")
+
+    def test_word_is_fully_typed_at_its_end(self):
+        line = Typewriter().render(self._state(1.0)).line
+        self.assertTrue(self._visible(line).startswith("hello"))
+
+    def test_whole_line_typed_once_the_last_word_ends(self):
+        line = Typewriter().render(self._state(2.0)).line
+        self.assertEqual(line.plain, self.TEXT)
+        self.assertNotIn(HIDDEN, line.plain)
+
+    def test_trailing_punctuation_is_revealed_with_the_last_word(self):
+        text = "go now!"
+        spans = (WordSpan(0.0, 1.0, "go", 0, 2), WordSpan(1.0, 2.0, "now", 3, 6))
+        state = _mk_state(text, spans, word_idx=1, sync_pos=2.0)
+        self.assertEqual(Typewriter().render(state).line.plain, text)
+
+    def test_row_width_never_shifts_as_it_fills_in(self):
+        expected = cell_len(self.TEXT)
+        for t in (-1.0, 0.0, 0.3, 0.7, 1.0, 1.5, 2.0, 99.0):
+            line = Typewriter().render(self._state(t)).line
+            self.assertEqual(cell_len(line.plain), expected, f"t={t}")
+
+    def test_word_gaps_stay_visible_while_words_are_blank(self):
+        line = Typewriter().render(self._state(0.2)).line
+        # The space between the words is a real space, not a braille blank.
+        self.assertIn(" ", line.plain)
+
+    def test_typed_text_is_accent_coloured(self):
+        line = Typewriter().render(self._state(0.5)).line
+        self.assertIn("#00e5ff", _style_at(line, 0))
+
+    def test_no_word_data_shows_the_whole_line(self):
+        state = _mk_state("no words here", (), word_idx=-1, sync_pos=10.0)
+        self.assertEqual(Typewriter().render(state).line.plain, "no words here")
+
+    def test_empty_line_is_safe(self):
+        state = _mk_state("", (), word_idx=-1, sync_pos=0.0)
+        self.assertEqual(Typewriter().render(state).line.plain, "")
+
+    def test_caret_blinks_off_sync_pos(self):
+        self.assertTrue(caret_on(0.0))     # phase 0 -> on
+        self.assertFalse(caret_on(0.4))    # 0.64 -> off
+        self.assertTrue(caret_on(1.5))     # 2.4 -> 0.4 -> on
+        # Frozen clock => identical frame, no drift while paused.
+        a = Typewriter().render(self._state(0.5)).line.plain
+        b = Typewriter().render(self._state(0.5)).line.plain
+        self.assertEqual(a, b)
+
+    def test_caret_sits_on_the_next_character(self):
+        line = Typewriter().render(self._state(0.0)).line  # caret on, "h" typed
+        self.assertIn(CARET, line.plain)
+        self.assertEqual(line.plain.index(CARET), 1)
+
+    def test_no_caret_once_the_line_is_complete(self):
+        line = Typewriter().render(self._state(2.0)).line
+        self.assertNotIn(CARET, line.plain)
+
+    def test_boundary_is_monotonic(self):
+        prev = -1
+        for i in range(0, 41):
+            t = i * 0.05
+            b = typed_boundary(self._state(t))
+            self.assertGreaterEqual(b, prev, f"t={t}")
+            prev = b
 
 
 class TestWordBounce(unittest.TestCase):

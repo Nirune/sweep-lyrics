@@ -115,9 +115,10 @@ Pick a lyric animation:
 | `wipe` | Left-to-right karaoke wipe (default) |
 | `dot` | One `●` sits above the sung word and arcs through a 2-row lane before each jump (1 row on a short terminal) |
 | `bounce` | The sung word hops into a 1-row lane above the line, then lands as you hold the word |
+| `typewriter` | The line types itself in character by character, with a blinking caret on the next letter |
 | `none` | Static highlight |
 
-Set `SWEEP_ANIMATION` to `wipe`, `dot`, `bounce`, or `none` before you start. That choice lasts for this run.
+Set `SWEEP_ANIMATION` to `wipe`, `dot`, `bounce`, `typewriter`, or `none` before you start. That choice lasts for this run.
 
 `dot` and `bounce` follow per-word onsets. When the lyrics source only has line-level timing (LRCLIB, YouTube Music), Sweep Lyrics spreads the line's words across its time window by syllable weight, so both styles still move instead of sitting still.
 
@@ -139,7 +140,7 @@ rm -rf ~/.cache/sweep-lyrics
 
 ## ⚙️ Environment variables
 
-- `SWEEP_ANIMATION`: lyric animation (`wipe`, `dot`, `bounce`, `none`). Default `wipe`. Other values use `wipe`.
+- `SWEEP_ANIMATION`: lyric animation (`wipe`, `dot`, `bounce`, `typewriter`, `none`). Default `wipe`. Other values use `wipe`.
 - `SWEEP_SHAZAM_DEVICE`: audio source for Shazam and sync. Default is the monitor of your current sink, from `pactl`. Example: `SWEEP_SHAZAM_DEVICE=alsa_output.xyz.monitor`
 - `SWEEP_SMOOTH`: set to `0` for a hard karaoke cut. Default feathers the edge.
 - `SWEEP_WORD_WIPE_SOFT`: set to `0` for a hard per-word wipe. Default feathers the edge.
